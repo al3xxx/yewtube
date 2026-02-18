@@ -9,15 +9,17 @@ from . import RS, WORD, command
 from .search import related, yt_url
 from .songlist import plist
 
-@command(r'play all', 'play all')
+
+@command(r"play all", "play all")
 def play_loaded():
     g.model.songs = content.get_last_query()
     if g.model.songs:
         play_all("", "", "")
 
-@command(r'play\s+(%s|\d+)' % WORD, 'play')
+
+@command(r"play\s+(%s|\d+)" % WORD, "play")
 def play_pl(name):
-    """ Play a playlist by name. """
+    """Play a playlist by name."""
     if name.isdigit():
         name = int(name)
         name = sorted(g.userpl)[name - 1]
@@ -37,10 +39,9 @@ def play_pl(name):
         g.content = content.playlists_display()
 
 
-@command(r'(%s{0,3})([-,\d\s\[\]]{1,250})\s*(%s{0,3})$' %
-         (RS, RS))
+@command(r"(%s{0,3})([-,\d\s\[\]]{1,250})\s*(%s{0,3})$" % (RS, RS))
 def play(pre, choice, post=""):
-    """ Play choice.  Use repeat/random if appears in pre/post. """
+    """Play choice.  Use repeat/random if appears in pre/post."""
     # pylint: disable=R0914
     # too many local variables
 
@@ -53,9 +54,8 @@ def play(pre, choice, post=""):
         return
 
     if g.browse_mode == "ytpl":
-
         if choice.isdigit():
-            g.selected_pafy_pls_id = g.ytpls[int(choice)-1]['link']
+            g.selected_pafy_pls_id = g.ytpls[int(choice) - 1]["link"]
             return plist(g.selected_pafy_pls_id)
         else:
             g.message = "Invalid playlist selection: %s" % c.y + choice + c.w
@@ -74,8 +74,12 @@ def play(pre, choice, post=""):
         nofs = "-w" in pre + post
         forcevid = "-v" in pre + post
 
-        if ((novid and fs) or (novid and nofs) or (nofs and fs)
-           or (novid and forcevid)):
+        if (
+            (novid and fs)
+            or (novid and nofs)
+            or (nofs and fs)
+            or (novid and forcevid)
+        ):
             raise IOError("Conflicting override options specified")
 
         override = False
@@ -103,8 +107,10 @@ def play(pre, choice, post=""):
 
         try:
             if not config.PLAYER.get or not util.has_exefile(config.PLAYER.get):
-                g.message = "Player not configured! Enter %sset player <player_app> "\
-                            "%s to set a player" % (c.g, c.w)
+                g.message = (
+                    "Player not configured! Enter %sset player <player_app> "
+                    "%s to set a player" % (c.g, c.w)
+                )
                 return
             g.PLAYER_OBJ.play(songlist, shuffle, repeat, override)
         except KeyboardInterrupt:
@@ -120,15 +126,14 @@ def play(pre, choice, post=""):
             play(pre, str(random.randint(1, 15)), post="")
 
 
-@command(r'(%s{0,3})(?:\*|all)\s*(%s{0,3})' %
-        (RS, RS))
+@command(r"(%s{0,3})(?:\*|all)\s*(%s{0,3})" % (RS, RS))
 def play_all(pre, choice, post=""):
-    """ Play all tracks in model (last displayed). shuffle/repeat if req'd."""
+    """Play all tracks in model (last displayed). shuffle/repeat if req'd."""
     options = pre + choice + post
     play(options, "1-" + str(len(g.model)))
 
 
-@command(r'playurl\s(.*[-_a-zA-Z0-9]{11}[^\s]*)(\s-(?:f|a|w))?', 'playurl')
+@command(r"playurl\s(.*[-_a-zA-Z0-9]{11}[^\s]*)(\s-(?:f|a|w))?", "playurl")
 def play_url(url: str, override: T.Any):
     """Open and play a youtube video url.
 
@@ -151,10 +156,10 @@ def play_url(url: str, override: T.Any):
         sys.exit()
 
 
-@command(r'browserplay\s(\d{1,50})', 'browserplay')
+@command(r"browserplay\s(\d{1,50})", "browserplay")
 def browser_play(number):
     """Open a previously searched result in the browser."""
-    if (len(g.model) == 0):
+    if len(g.model) == 0:
         g.message = c.r + "No previous search." + c.w
         g.content = content.logo(c.r)
         return
@@ -162,7 +167,7 @@ def browser_play(number):
     try:
         index = int(number) - 1
 
-        if (0 <= index < len(g.model)):
+        if 0 <= index < len(g.model):
             base_url = "https://www.youtube.com/watch?v="
             video = g.model[index]
             url = base_url + video.ytid
