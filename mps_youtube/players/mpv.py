@@ -3,6 +3,7 @@ import os
 import re
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -76,13 +77,13 @@ class mpv(CmdPlayer):
 
         msglevel = pd["msglevel"]["<0.4"]
 
-        #  undetected (negative) version number assumed up-to-date
+        # undetected (negative) version number assumed up-to-date
         if self.mpv_version[0:2] < (0, 0) or self.mpv_version[0:2] >= (0, 4):
             msglevel = pd["msglevel"][">=0.4"]
 
         if not g.debug_mode:
             if self.mpv_usesock:
-                util.list_update("--quiet", args)
+                util.list_update("--really-quiet", args)
             else:
                 util.list_update("--really-quiet", args, remove=True)
                 util.list_update(msglevel, args)
@@ -119,6 +120,7 @@ class mpv(CmdPlayer):
     def launch_player(self, cmd):
         self.input_file = _get_input_file()
         cmd.append("--input-conf=" + self.input_file)
+        cmd.append("--input-terminal=yes")
         self.conf_dir = _get_conf_dir()
         if self.conf_dir is not None:
             cmd.append("--config-dir=" + self.conf_dir)
@@ -137,14 +139,13 @@ class mpv(CmdPlayer):
             self.temp_dir = tempfile.mkdtemp(prefix="mpsyt-mpv-")
             self.sockpath = os.path.join(self.temp_dir, "mpv.sock")
             cmd.append(self.mpv_usesock + "=" + self.sockpath)
-            with open(os.devnull, "w") as devnull:
-                self.p = subprocess.Popen(
-                    cmd,
-                    shell=False,
-                    stdout=devnull,
-                    stderr=subprocess.PIPE,
-                    bufsize=0,
-                )
+            self.p = subprocess.Popen(
+                cmd,
+                shell=False,
+                stdin=sys.stdin,
+                stderr=subprocess.PIPE,
+                bufsize=0,
+            )
 
             import threading
 
@@ -161,14 +162,13 @@ class mpv(CmdPlayer):
                 cmd.append("--input-file=" + self.fifopath)
                 g.mprisctl.send(("mpv-fifo", self.fifopath))
 
-            with open(os.devnull, "w") as devnull:
-                self.p = subprocess.Popen(
-                    cmd,
-                    shell=False,
-                    stdout=devnull,
-                    stderr=subprocess.PIPE,
-                    bufsize=0,
-                )
+            self.p = subprocess.Popen(
+                cmd,
+                shell=False,
+                stdin=sys.stdin,
+                stderr=subprocess.PIPE,
+                bufsize=0,
+            )
 
         self._player_status(self.songdata + "; ", self.song.length)
         returncode = self.p.wait()

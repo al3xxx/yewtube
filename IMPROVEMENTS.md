@@ -35,10 +35,5 @@ This document tracks the significant refactoring and modernizations applied to t
 - **Input Robustness**: Fixed a potential `IndexError` in the duration parser when handling short time tokens.
 - **Global State Synchronization**: Ensured that fixes applied to the root source code are automatically mirrored to the active virtual environment during development.
 
-## 6. In human digestable format
-- **Search errors**: No more annoying 'proxy error' we've made it compatible with httpx 0.28.1 I hope
-- **Tab completion**: I'm just lazy and I like it. Also saves time listing saved playlists - you can just type 'open' and tab through it
-- **List sorting**: I think this is huge - you can sort search results by name, age duration, you can sort also playlists, both ways, just repeat sort command second time to reverse sort
-- **MPV aux command line**: added because I felt like it.
 ---
 *Last updated: February 18, 2026*
