@@ -340,10 +340,13 @@ class mpv(CmdPlayer):
             seek = "[{0}<-{1}] seek [{0}->{1}]"
             pause = "[{0}DN{1}] SEEK [{0}UP{1}]       [{0}space{1}] pause"
 
-        single = "[{0}q{1}] next"
+        single = "[{0}q{1}] Stop"
+        if config.AUTOPLAY.get:
+            single = "[{0}p{1}] prev [{0}q{1}] next"
+
         next_prev = "[{0}>{1}] next/prev [{0}<{1}]"
         # ret = "[{0}q{1}] %s" % ("return" if short else "next track")
-        ret = single if short and config.AUTOPLAY.get else ""
+        ret = single if short else ""
         ret = next_prev if not short else ret
         fmt = "    %-20s       %-20s"
         lines = fmt % (seek, volume) + "\n" + fmt % (pause, ret)
@@ -372,6 +375,7 @@ def _get_input_file():
     conf = conf.replace("pt_step 1", "quit")
     standard_cmds = [
         "q quit 43\n",
+        "p quit 42\n",
         "> quit\n",
         "< quit 42\n",
         "NEXT quit\n",

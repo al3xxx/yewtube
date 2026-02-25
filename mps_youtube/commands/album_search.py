@@ -59,17 +59,11 @@ def _best_song_match(songs, title, duration, titleweight, durationweight):
     # pylint: disable=R0914
     seqmatch = difflib.SequenceMatcher
 
-            def variance(a, b):
+    def variance(a, b):
+        """Return difference ratio."""
+        return float(abs(a - b)) / max(a, b) if max(a, b) > 0 else 0
 
-                """ Return difference ratio. """
-
-                return float(abs(a - b)) / max(a, b) if max(a, b) > 0 else 0
-
-        
-
-            candidates = []
-
-        
+    candidates = []
 
     ignore = "music video lyrics new lyrics video audio".split()
     extra = "official original vevo".split()

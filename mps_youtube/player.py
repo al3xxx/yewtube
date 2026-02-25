@@ -32,7 +32,9 @@ class BasePlayer:
             paused = True
         g.mprisctl.send(("pause", paused))
 
-    def play(self, songlist, shuffle=False, repeat=False, override=False):
+    def play(
+        self, songlist, shuffle=False, repeat=False, override=False, start_index=0
+    ):
         """Play a range of songs, exit cleanly on keyboard interrupt."""
 
         if config.ALWAYS_REPEAT.get:
@@ -45,7 +47,7 @@ class BasePlayer:
         if shuffle:
             random.shuffle(self.songlist)
 
-        self.song_no = 0
+        self.song_no = start_index
         while 0 <= self.song_no <= len(self.songlist) - 1:
             self.song = self.songlist[self.song_no]
             g.content = self._playback_progress(
@@ -140,14 +142,7 @@ class BasePlayer:
             )
 
         size = streams.get_size(self.song.ytid, self.stream["url"])
-        songdata = (
-            self.song.ytid,
-            ""
-            if self.stream.get("ext") is None
-            else self.stream.get("ext") + " " + self.stream["quality"],
-            int(size / (1024**2)),
-        )
-        self.songdata = "%s; %s; %s Mb" % songdata
+        self.songdata = "%s" % (self.song.title[:20])
         screen.writestatus(self.songdata)
 
         self._launch_player()
@@ -234,8 +229,11 @@ class BasePlayer:
         return out
 
     def make_status_line(self, elapsed_s, prefix, songlength=0, volume=None):
+        # Display static track name without ID or separator
+        new_prefix = "%s " % (self.song.title[:20])
+
         self._line = self._make_status_line(
-            elapsed_s, prefix, songlength, volume=volume
+            elapsed_s, new_prefix, songlength, volume=volume
         )
 
         if self._line != self._last_displayed_line:
@@ -290,7 +288,10 @@ class CmdPlayer(BasePlayer):
                 g.artist, g.album, g.scrobble_queue[self.song_no]
             )
         self.terminate_process()
-        self.song_no += 1
+        if self.repeat and self.song_no == len(self.songlist) - 1:
+            self.song_no = 0
+        else:
+            self.song_no += 1
 
     def previous(self):
         if g.scrobble:
@@ -298,12 +299,25 @@ class CmdPlayer(BasePlayer):
                 g.artist, g.album, g.scrobble_queue[self.song_no]
             )
         self.terminate_process()
-        self.song_no -= 1
+        if not config.AUTOPLAY.get:
+            raise KeyboardInterrupt
+
+        if self.song_no == 0:
+            if self.repeat:
+                self.song_no = len(self.songlist) - 1
+            else:
+                pass  # Stay at track 1
+        else:
+            self.song_no -= 1
 
     def stop(self):
+        # util.dbg("player.stop() called, autoplay=%s", config.AUTOPLAY.get)
         self.terminate_process()
-        raise KeyboardInterrupt
-        # self.song_no = len(self.songlist)
+        if not config.AUTOPLAY.get:
+            raise KeyboardInterrupt
+        else:
+            if self.song_no < len(self.songlist):
+                self.song_no += 1
 
     def terminate_process(self):
         self.p.terminate()

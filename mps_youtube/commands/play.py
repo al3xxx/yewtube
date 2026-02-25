@@ -91,11 +91,17 @@ def play(pre, choice, post=""):
             override = "forcevid" if forcevid else override
 
         selection = util.parse_multi(choice)
-        songlist = [g.model[x - 1] for x in selection]
+        start_index = 0
+
+        if config.AUTOPLAY.get and len(selection) == 1:
+            songlist = list(g.model)
+            start_index = selection[0] - 1
+        else:
+            songlist = [g.model[x - 1] for x in selection]
 
         # cache next result of displayed items
         # when selecting a single item
-        if len(songlist) == 1:
+        if len(selection) == 1:
             chosen = selection[0] - 1
 
             if len(g.model) > chosen + 1:
@@ -112,7 +118,9 @@ def play(pre, choice, post=""):
                     "%s to set a player" % (c.g, c.w)
                 )
                 return
-            g.PLAYER_OBJ.play(songlist, shuffle, repeat, override)
+            g.PLAYER_OBJ.play(
+                songlist, shuffle, repeat, override, start_index=start_index
+            )
         except KeyboardInterrupt:
             return
         finally:
@@ -120,10 +128,6 @@ def play(pre, choice, post=""):
 
         if g.scrobble:
             g.scrobble_queue = old_queue
-
-        if config.AUTOPLAY.get:
-            related(selection.pop())
-            play(pre, str(random.randint(1, 15)), post="")
 
 
 @command(r"(%s{0,3})(?:\*|all)\s*(%s{0,3})" % (RS, RS))

@@ -618,7 +618,7 @@ class CommandCompleter(Completer):
 
                     try:
                         item = config[key.upper()]
-                        if item.type == bool:
+                        if hasattr(item, "type") and item.type == bool:
                             for val in ("true", "false"):
                                 if val.startswith(val_prefix.lower()):
                                     yield Completion(

@@ -24,16 +24,36 @@ This document tracks the significant refactoring and modernizations applied to t
     *   Unified video suppression logic (fixed crashes when passing both `--no-video` and `--vid=no`).
     *   Removed redundant double-quoting in subprocess arguments.
 - **Extensibility**: Added the `aux_mpv_cli_config` setting to allow users to pass arbitrary additional command-line arguments to `mpv`.
+- **Keyboard Interactivity**: Restored standard input flow to `mpv` while maintaining clean terminal output, ensuring Space (pause) and Arrow keys (seek) work during playback.
 
 ## 4. Metadata & Sorting (Completed)
 - **Search Metadata**: Patched `youtubesearchpython` to correctly extract `publishedTime` from YouTube's varying renderer formats.
 - **Chronological Sorting**: Implemented a weight-based heuristic to convert relative upload strings (e.g., "2 weeks ago", "5 months ago") into sortable numeric values, fixing alphabetical sorting bugs.
 - **Matching Accuracy**: Improved the `best_song_match` algorithm in `album_search` and `spotify_playlist` by fixing duration variance scoring and preventing negative score components.
 
-## 5. Core Utility & Reliability (Completed)
-- **Terminal Detection**: Modernized `util.getxy` to use `shutil.get_terminal_size()` as the primary detection method.
-- **Input Robustness**: Fixed a potential `IndexError` in the duration parser when handling short time tokens.
-- **Global State Synchronization**: Ensured that fixes applied to the root source code are automatically mirrored to the active virtual environment during development.
+## 5. Security & Reliability Fixs (Completed)
+- **Resource Management**: Implemented context managers for file downloads to prevent file handle leaks during network interruptions.
+- **Insecure Temp Files**: Replaced `tempfile.mktemp` with secure `tempfile.mkdtemp` in both `mpv` and `mplayer` backends to prevent race conditions.
+- **Safe Process Control**: Refactored the `VLC` backend to use granular process termination (`terminate()`) instead of aggressive system-wide `pkill`.
+- **API Modernization**: Replaced all remaining legacy `pafy.call_gdata` calls with modern search and metadata retrieval methods across `generate_playlist`, `spotify_playlist`, and `description_parser`.
+- **Input Robustness**: Fixed potential `IndexError` in the duration parser and `ZeroDivisionError` in metadata matching logic.
+- **Shadowing Fixes**: Resolved variable shadowing (e.g., `c` loop variable vs `c` color module) to prevent subtle logic errors.
+
+## 6. Code Quality (Completed)
+- **Linting & Formatting**: Adopted `ruff` for fast linting and formatting.
+- **Consistency**: Standardized on an 80-character line limit and project-wide formatting.
+- **Type Safety**: Converted bare `except` blocks to explicit `except Exception:` to prevent catching system signals or masking fatal errors.
+
+## 7. User Interface & Playback Control (Completed)
+- **Clean Playback UI**: Streamlined the status bar by replacing the scrolling track size and YouTube ID with a static track title (truncated to 20 characters), providing a cleaner and more readable playback experience.
+- **Sequential Autoplay**: Overhauled the `AUTOPLAY` logic to implement a predictable sequential flow through the current song list. This removed redundant random-related-video recursion in favor of stable list traversal.
+- **Advanced Navigation**:
+    - **Skip to Next**: Re-mapped the `q` key to skip to the next track when `AUTOPLAY` is enabled, rather than stopping playback.
+    - **Previous Track ('p')**: Added the `p` key for previous track navigation in both `mpv` and `mplayer` backends.
+    - **Help Legend**: Updated the in-player help text to dynamically show `[p] prev [q] next` when autoplay is active.
+- **Context-Aware Playback**: Refactored the playback command to provide the player with full list context and a `start_index`. This ensures that navigation keys (`p`/`q`) can correctly traverse the entire original list even when a single track is selected for play.
+- **MPlayer Modernization**: Restored standard terminal interactivity (`stdin`) to the `mplayer` backend, ensuring parity with `mpv` for keyboard controls like pause and seek.
+- **Diagnostic Transparency**: Improved exception handling in metadata retrieval to surface original error messages, aiding in the diagnosis of private or geo-restricted content.
 
 ---
-*Last updated: February 18, 2026*
+*Last updated: February 24, 2026*

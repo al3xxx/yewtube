@@ -168,9 +168,10 @@ def get_video_info(video_id):
         videoInfo["dislikes"] = response["dislikes"]
         videoInfo["averageRating"] = response["rating"]
         return videoInfo
-    except Exception:
+    except Exception as e:
         raise Exception(
-            "Can't get video info. Video is either private or unavailable in your country."
+            "Can't get video info: %s. Video is either private or unavailable in your country."
+            % str(e)
         )
 
 
