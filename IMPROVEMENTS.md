@@ -66,5 +66,27 @@ This document tracks the significant refactoring and modernizations applied to t
 - **Improved Metadata Retrieval**: Unified search and playlist metadata processing to use modern scraping techniques, significantly reducing "no results" or "extraction failed" errors.
 - **Search Fallback Mechanism**: Implemented a robust fallback to `yt-dlp` for video searches when `youtubesearchpython` crashes or fails (common with high-profile artists like 'Lana Del Rey' due to complex shelf renderers).
 
+## 9. Full yt-dlp Migration (Completed)
+- **Eliminated Scraping Dependencies**: Successfully migrated the entire application from `youtube-search-python` to an internal `yt-dlp` and direct API-based implementation. This removes fragile HTML scraping dependencies that frequently broke on YouTube UI updates.
+- **Unified Search Engine**: All search types (video, playlist, and channel) now use the robust `yt-dlp` search backend with optimized filters (e.g., `sp=EgIQAw%3D%3D` for playlists).
+- **High-Performance Discovery**: 
+    - **Playlist Loading**: Re-implemented `get_playlist` using `yt-dlp`'s `extract_flat` mode, providing significantly faster loading of large playlists.
+    - **Channel Content**: Refactored channel video and playlist retrieval to use `yt-dlp`, ensuring stable metadata across the discovery workflow.
+- **Lightweight Suggestions**: Replaced the legacy `Suggestions` class with a direct, asynchronous-ready API call to the Google Suggest service, reducing overhead and improving response times.
+- **Advanced Metadata**: 
+    - **Comment Extraction**: Re-integrated video comment viewing using `yt-dlp`'s `getcomments` capability.
+    - **Dislike Restoration**: Maintained integration with the `Return YouTube Dislike` API alongside `yt-dlp` metadata.
+
+## 10. Search Performance Optimization (Completed)
+- **Extractor Filtering**: Optimized `yt-dlp` initialization by restricting allowed extractors to `youtube:search` and `youtube`, cutting search startup time by reducing unnecessary extractor checks.
+- **Lazy Extraction**: Enabled `lazy_extract` for all search types, allowing the application to fetch result lists without waiting for detailed metadata for every individual entry.
+- **Disk I/O Reduction**: Disabled the `yt-dlp` cache directory for search operations to eliminate unnecessary disk writes during ephemeral queries.
+
+## 11. Architectural Refinements (Completed)
+- **Robust Metadata Mapping**: Implemented a `MockPlaylist` compatibility layer to bridge `yt-dlp` raw output with the existing UI, preventing attribute errors during display.
+- **Safe Network Handling**: Added timeouts and comprehensive error handling to all network-bound operations (e.g., content-length retrieval and search suggestions).
+- **Resolution Resilience**: Hardened the stream selection logic to handle non-standard or malformed resolution strings (e.g., "720p" vs "1280x720") common in `yt-dlp` results.
+- **Initialization Integrity**: Improved the main entry point to ensure the application stops immediately on initialization failures, preventing cascaded state errors.
+
 ---
-*Last updated: February 25, 2026*
+*Last updated: February 26, 2026*

@@ -142,7 +142,7 @@ def main(
         click.echo(f"Initialization failed: {e}", err=True)
         if g.debug_mode:
             traceback_py.print_exc()
-        sys.exit(1)
+        return sys.exit(1)
 
     if config.SET_TITLE.get:
         util.set_window_title("yewtube")

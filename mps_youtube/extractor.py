@@ -12,18 +12,6 @@ import typing as T
 
 from . import util
 import yt_dlp
-from youtubesearchpython import (
-    VideosSearch,
-    ChannelsSearch,
-    PlaylistsSearch,
-    Suggestions,
-    Playlist,
-    playlist_from_channel_id,
-    Comments,
-    Video,
-    Channel,
-    ChannelSearch,
-)
 
 
 class VideoInfo:
@@ -134,30 +122,19 @@ def download_video(ytid, folder, audio_only=False):
 
 
 def search_videos(query, pages):
-    """Search for videos and return standard results.
-    Tries youtubesearchpython first, falls back to yt-dlp if it crashes.
-    """
-    try:
-        videosSearch = VideosSearch(query, limit=50)
-        res = videosSearch.result()
-        if not res or "result" not in res:
-            return []
-        wdata = res["result"]
-        for _ in range(pages - 1):
-            videosSearch.next()
-            res = videosSearch.result()
-            if res and "result" in res:
-                wdata.extend(res["result"])
-        return wdata
-    except Exception as e:
-        util.dbg("youtubesearchpython failed: %s. Falling back to yt-dlp.", str(e))
-        return _search_videos_ytdl(query, pages)
+    """Search for videos and return standard results using yt-dlp."""
+    return _search_videos_ytdl(query, pages)
 
 
 def _search_videos_ytdl(query, pages):
-    """Fallback search using yt-dlp."""
+    """Search using yt-dlp with optimized flags."""
     count = pages * 50
-    ydl_opts = get_ydl_opts({"extract_flat": True})
+    ydl_opts = get_ydl_opts({
+        "extract_flat": True,
+        "allowed_extractors": ["youtube:search", "youtube"],
+        "lazy_extract": True,
+        "cachedir": False,
+    })
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(f"ytsearch{count}:{query}", download=False)
@@ -202,9 +179,35 @@ def _search_videos_ytdl(query, pages):
 
 
 def channel_search(query):
-    """Search for channels."""
-    channelsSearch = ChannelsSearch(query, limit=50, region="US")
-    return channelsSearch.result()["result"]
+    """Search for channels using yt-dlp."""
+    encoded_query = urllib.parse.quote(query)
+    # sp=EgIQAg%3D%3D is the filter for channels
+    url = f"https://www.youtube.com/results?search_query={encoded_query}&sp=EgIQAg%3D%3D"
+    
+    ydl_opts = get_ydl_opts({
+        "extract_flat": True,
+        "allowed_extractors": ["youtube:search", "youtube"],
+        "lazy_extract": True,
+        "cachedir": False,
+    })
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            results = []
+            for entry in info.get("entries", []):
+                results.append({
+                    "type": "channel",
+                    "id": entry.get("id"),
+                    "title": entry.get("title") or entry.get("channel"),
+                    "thumbnails": entry.get("thumbnails"),
+                    "videoCount": entry.get("video_count"),
+                    "description": entry.get("description", ""),
+                    "link": entry.get("url") or f"https://www.youtube.com/channel/{entry.get('id')}",
+                })
+            return results
+    except Exception as e:
+        util.dbg("Channel search failed: %s", str(e))
+        return []
 
 
 def playlist_search(query):
@@ -212,7 +215,12 @@ def playlist_search(query):
     encoded_query = urllib.parse.quote(query)
     url = f"https://www.youtube.com/results?search_query={encoded_query}&sp=EgIQAw%3D%3D"
     
-    ydl_opts = get_ydl_opts({"extract_flat": True})
+    ydl_opts = get_ydl_opts({
+        "extract_flat": True,
+        "allowed_extractors": ["youtube:search", "youtube"],
+        "lazy_extract": True,
+        "cachedir": False,
+    })
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -238,22 +246,62 @@ def playlist_search(query):
 
 
 def get_playlist(playlist_id):
-    """Get all videos of a playlist."""
-    playlist = Playlist(
-        "https://www.youtube.com/playlist?list=%s" % playlist_id
-    )
-    while playlist.hasMoreVideos:
-        playlist.getNextVideos()
-    return playlist
+    """Get all videos of a playlist using yt-dlp."""
+    url = f"https://www.youtube.com/playlist?list={playlist_id}"
+    ydl_opts = get_ydl_opts({
+        "extract_flat": True,
+        "allowed_extractors": ["youtube:search", "youtube"],
+        "lazy_extract": True,
+        "cachedir": False,
+    })
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            
+            # Create a mock object that looks like youtubesearchpython.Playlist
+            class MockPlaylist:
+                def __init__(self, info):
+                    self.videos = []
+                    self.info = {"info": {"title": info.get("title", "Unknown Playlist")}}
+                    for entry in info.get("entries", []):
+                        duration = entry.get("duration")
+                        if duration:
+                            m, s = divmod(int(duration), 60)
+                            h, m = divmod(m, 60)
+                            duration_str = f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+                        else:
+                            duration_str = "0:00"
+
+                        self.videos.append({
+                            "id": entry.get("id"),
+                            "title": entry.get("title"),
+                            "duration": duration_str,
+                            "channel": {
+                                "name": entry.get("uploader") or entry.get("channel"),
+                                "id": entry.get("uploader_id") or entry.get("channel_id"),
+                            },
+                            "link": f"https://www.youtube.com/watch?v={entry.get('id')}",
+                        })
+            
+            return MockPlaylist(info)
+    except Exception as e:
+        util.dbg("Failed to get playlist %s: %s", playlist_id, str(e))
+        raise ExtractionError(f"Playlist extraction failed: {str(e)}")
 
 
 def get_video_title_suggestions(query):
-    """Get search suggestions."""
-    suggestions = Suggestions(language="en", region="US")
-    related_searches = suggestions.get(query)["result"]
-    if not related_searches:
+    """Get search suggestions using direct Google API call."""
+    encoded_query = urllib.parse.quote(query)
+    url = f"https://suggestqueries.google.com/complete/search?client=youtube&ds=yt&q={encoded_query}"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode())
+            if not isinstance(data, list) or len(data) < 2 or not data[1]:
+                return query
+            return random.choice(data[1])
+    except Exception:
         return query
-    return related_searches[random.randint(0, len(related_searches) - 1)]
 
 
 def channel_id_from_name(query):
@@ -266,34 +314,87 @@ def channel_id_from_name(query):
 
 
 def all_videos_from_channel(channel_id):
-    """Get all videos from a channel."""
-    playlist = Playlist(playlist_from_channel_id(channel_id))
-    while playlist.hasMoreVideos:
-        playlist.getNextVideos()
-    return playlist.videos
+    """Get all videos from a channel using yt-dlp."""
+    url = f"https://www.youtube.com/channel/{channel_id}/videos"
+    ydl_opts = get_ydl_opts({
+        "extract_flat": True,
+        "allowed_extractors": ["youtube:search", "youtube"],
+        "lazy_extract": True,
+        "cachedir": False,
+    })
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            videos = []
+            for entry in info.get("entries", []):
+                duration = entry.get("duration")
+                if duration:
+                    m, s = divmod(int(duration), 60)
+                    h, m = divmod(m, 60)
+                    duration_str = f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+                else:
+                    duration_str = "0:00"
+
+                videos.append({
+                    "id": entry.get("id"),
+                    "title": entry.get("title"),
+                    "duration": duration_str,
+                    "channel": {
+                        "name": entry.get("uploader") or entry.get("channel"),
+                        "id": entry.get("uploader_id") or entry.get("channel_id"),
+                    },
+                    "link": f"https://www.youtube.com/watch?v={entry.get('id')}",
+                })
+            return videos
+    except Exception as e:
+        util.dbg("Failed to get channel videos for %s: %s", channel_id, str(e))
+        return []
 
 
 def search_videos_from_channel(channel_id, query):
     """Search videos within a specific channel."""
-    search = ChannelSearch(query, channel_id)
-    return search.result()["result"]
+    # This can be done by adding a query string to the channel URL or via search filters
+    encoded_query = urllib.parse.quote(query)
+    url = f"https://www.youtube.com/channel/{channel_id}/search?query={encoded_query}"
+    # Fallback to search if specific channel search fails in flat extract
+    return _search_videos_ytdl(f"{query} channel:{channel_id}", 1)
 
 
 def get_comments(video_id):
-    """Get video comments."""
-    comments = Comments.get(video_id)
-    return comments["result"]
+    """Get video comments using yt-dlp."""
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    ydl_opts = get_ydl_opts({"getcomments": True, "extract_flat": False})
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            comments = []
+            for comment in info.get("comments", []):
+                comments.append({
+                    "id": comment.get("id"),
+                    "author": comment.get("author"),
+                    "authorId": comment.get("author_id"),
+                    "content": comment.get("text"),
+                    "publishedAt": comment.get("timestamp"),
+                    "votes": comment.get("like_count"),
+                })
+            return comments
+    except Exception as e:
+        util.dbg("Failed to get comments for %s: %s", video_id, str(e))
+        return []
 
 
 def get_video_info(video_id):
     """Get detailed video info including likes/dislikes."""
     try:
-        video_info_raw = Video.getInfo(video_id)
-        response = return_dislikes(video_id)
-        video_info_raw["likes"] = response["likes"]
-        video_info_raw["dislikes"] = response["dislikes"]
-        video_info_raw["averageRating"] = response["rating"]
-        return VideoInfo(video_info_raw)
+        # Instead of Video.getInfo (youtubesearchpython), use yt-dlp
+        ydl_opts = get_ydl_opts()
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(video_id, download=False)
+            response = return_dislikes(video_id)
+            info["likes"] = response["likes"]
+            info["dislikes"] = response["dislikes"]
+            info["averageRating"] = response["rating"]
+            return VideoInfo(info)
     except Exception as e:
         raise ExtractionError(f"Can't get video info: {str(e)}")
 
@@ -343,13 +444,33 @@ def extract_video_id(url: str) -> str:
 
 
 def all_playlists_from_channel(channel_id):
-    """Get all playlists belonging to a channel."""
-    channel = Channel(channel_id)
-    playlists = channel.result["playlists"]
-    while channel.has_more_playlists():
-        channel.next()
-        playlists.extend(channel.result["playlists"])
-    return playlists
+    """Get all playlists belonging to a channel using yt-dlp."""
+    url = f"https://www.youtube.com/channel/{channel_id}/playlists"
+    ydl_opts = get_ydl_opts({
+        "extract_flat": True,
+        "allowed_extractors": ["youtube:search", "youtube"],
+        "lazy_extract": True,
+        "cachedir": False,
+    })
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            playlists = []
+            for entry in info.get("entries", []):
+                playlists.append({
+                    "id": entry.get("id"),
+                    "title": entry.get("title"),
+                    "videoCount": entry.get("playlist_count") or "?",
+                    "channel": {
+                        "name": entry.get("uploader") or entry.get("channel"),
+                        "id": entry.get("uploader_id") or entry.get("channel_id"),
+                    },
+                    "description": entry.get("description", ""),
+                })
+            return playlists
+    except Exception as e:
+        util.dbg("Failed to get channel playlists for %s: %s", channel_id, str(e))
+        return []
 
 
 def get_subtitles(ytid, output_dir):
