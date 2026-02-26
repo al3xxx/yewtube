@@ -6,7 +6,7 @@ from os import path
 from random import choice
 import string
 
-from .. import content, g, playlists, screen, util, listview, pafy, config
+from .. import content, g, playlists, screen, util, listview, extractor, config
 from ..playlist import Playlist
 from . import command, search, album_search
 
@@ -77,7 +77,7 @@ def find_best_match(query):
     # This assumes that the first match is the best one
 
 
-    wdata = pafy.search_videos(query, int(config.PAGES.get))
+    wdata = extractor.search_videos(query, int(config.PAGES.get))
 
 
     results = search.get_tracks_from_json(wdata)
@@ -120,7 +120,7 @@ def description_generator(text):
     num = util.number_string_to_list(num)[0]
 
     ytid = g.model[num].ytid
-    data = pafy.get_video_info(ytid)
+    data = extractor.get_video_info(ytid)
     title = "mkp %s" % data["title"]
     data = util.fetch_songs(data["description"], data["title"])
 

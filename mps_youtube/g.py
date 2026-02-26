@@ -44,10 +44,10 @@ rprompt = None
 active = Playlist(name="active")
 userpl = {}
 userhist = {}
-pafs = collections.OrderedDict()
+metadata_cache = collections.OrderedDict()
 streams = collections.OrderedDict()
-pafy_pls = {}  #
-selected_pafy_pls_id = ""
+playlist_cache = {}  #
+selected_playlist_id = ""
 last_opened = message = content = ""
 suffix = "3"  # Python 3
 OLD_CFFILE = os.path.join(paths.get_config_dir(), "config")

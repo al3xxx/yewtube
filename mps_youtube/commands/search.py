@@ -5,7 +5,7 @@ import math
 import re
 from argparse import ArgumentParser
 
-from .. import pafy
+from .. import extractor
 
 parser = ArgumentParser()
 parser.add_argument(
@@ -40,7 +40,7 @@ def _display_search_results(progtext, wdata, msg=None, failmsg=None):
 
             if type(wdata2) is list or not wdata2.get("nextPageToken"):
                 break
-            wdata2 = None  # pafy.call_gdata('search', qs)
+            wdata2 = None  # extractor.call_gdata('search', qs)
 
     # The youtube search api returns a maximum of 500 results
     length = len(wdata)
@@ -129,7 +129,7 @@ def channelfromname(user):
         return cached
 
     try:
-        channel_id, channel_name = pafy.channel_id_from_name(user)
+        channel_id, channel_name = extractor.channel_id_from_name(user)
         return cache_userdata(user, channel_name, channel_id)
 
     except Exception as e:
@@ -224,7 +224,7 @@ Use 'set search_music False' to show results not in the Music category.""" % ter
             failmsg = "User %s not found or has no videos." % termuser[1]
     msg = str(msg).format(c.w, c.y, c.y, term, user)
 
-    videos = pafy.all_videos_from_channel(channel_id)
+    videos = extractor.all_videos_from_channel(channel_id)
     query = term.lower() if term else None
 
     if query:
@@ -247,7 +247,7 @@ def related_search(vitem):
     t = vitem.title
     t[:48].strip() + ".." if len(t) > 49 else t
 
-    # todo: implement realted search in pafy
+    # todo: implement realted search in extractor
     # _search(ttitle, vitem.title, msg, failmsg)
 
 
@@ -318,7 +318,7 @@ def search(term):
 
     msg = "Search results for %s%s%s" % (c.y, term, c.w)
     failmsg = "Found nothing for %s%s%s" % (c.y, term, c.w)
-    wdata = pafy.search_videos(term, int(config.PAGES.get))
+    wdata = extractor.search_videos(term, int(config.PAGES.get))
     _display_search_results(term, wdata, msg, failmsg)
 
 
@@ -352,9 +352,9 @@ def pl_search(term, page=0, splash=True, is_user=False):
         if not ret:
             return
         user, channel_id = ret
-        pldata = pafy.all_playlists_from_channel(channel_id)
+        pldata = extractor.all_playlists_from_channel(channel_id)
     else:
-        pldata = pafy.playlist_search(term)
+        pldata = extractor.playlist_search(term)
 
     playlists = get_pl_from_json(pldata)[: util.getxy().max_results]
 
@@ -376,28 +376,29 @@ def pl_search(term, page=0, splash=True, is_user=False):
 def get_pl_from_json(pldata):
     """Process json playlist data."""
 
-    try:
-        items = pldata
+    if not pldata:
+        return []
 
-    except KeyError:
-        items = []
-
+    items = pldata
     results = []
 
     for item in items:
-        results.append(
-            dict(
-                link=item["id"],
-                size=item["videoCount"],
-                title=item["title"],
-                author=item["channel"]["name"]
-                if "channel" in item.keys()
-                else None,
-                created=item.get("publishedAt"),
-                updated=item.get("publishedAt"),  # XXX Not available in API?
-                description=item.get("description"),
+        try:
+            channel_data = item.get("channel", {})
+            results.append(
+                dict(
+                    link=item.get("id", ""),
+                    size=item.get("videoCount", "0"),
+                    title=item.get("title", "Unknown Playlist"),
+                    author=channel_data.get("name", "?") if isinstance(channel_data, dict) else "?",
+                    created=item.get("publishedAt", "?"),
+                    updated=item.get("publishedAt", "?"),
+                    description=item.get("description", ""),
+                )
             )
-        )
+        except Exception as e:
+            util.dbg(f"Error during playlist extraction: {str(e)}")
+            continue
 
     return results
 
@@ -423,70 +424,69 @@ def get_track_id_from_json(item):
 def get_tracks_from_json(jsons):
     """Get search results from API response"""
 
-    if len(jsons) == 0:
+    if not jsons or len(jsons) == 0:
         util.dbg("got unexpected data or no search results")
         return ()
 
     # populate list of video objects
     songs = []
     for item in jsons:
+        ytid = ""
         try:
             ytid = get_track_id_from_json(item)
+            if not ytid:
+                continue
+                
             duration = util.parse_video_length(item.get("duration"))
-            # stats = item.get('statistics', {})
-            # snippet = item.get('snippet', {})
-            title = item.get("title", "").strip()
+            title = item.get("title", "Unknown Title").strip()
             # instantiate video representation in local model
             cursong = Video(ytid=ytid, title=title, length=duration)
-            dislike_data = {
-                "likes": 0,
-                "dislikes": 0,
-                "rating": 0,
-            }  # pafy.return_dislikes(ytid)
-            likes = int(dislike_data["likes"])
-            dislikes = int(dislike_data["dislikes"])
-            # this is a very poor attempt to calculate a rating value
-            rating = int(
-                dislike_data["rating"]
-            )  # 5.*likes/(likes+dislikes) if (likes+dislikes) > 0 else 0
-            category = "?"  # snippet.get('categoryId')
+            
+            # Default metadata values
+            likes = 0
+            dislikes = 0
+            rating = 0
+            category = "?"
             published_time = (
                 item.get("publishedTime")
                 or item.get("publishedTimeText")
                 or "?"
             )
+            
+            channel_data = item.get("channel", {})
+            uploader_id = channel_data.get("id", "?")
+            uploader_name = channel_data.get("name", "?")
+            
+            view_count_data = item.get("viewCount", {})
+            if isinstance(view_count_data, dict):
+                view_count = view_count_data.get("text", "?")
+            else:
+                view_count = "?"
 
             # cache video information in custom global variable store
             g.meta[ytid] = dict(
-                # tries to get localized title first, fallback to normal title
                 title=title,
                 length=str(util.fmt_time(cursong.length)),
-                rating=rating,  # str('{}'.format(rating))[:4].ljust(4, "0"),
-                uploader=item["channel"]["id"],
-                uploaderName=item["channel"]["name"],
+                rating=rating,
+                uploader=uploader_id,
+                uploaderName=uploader_name,
                 category=category,
-                aspect="custom",  # XXX
+                aspect="custom",
                 uploaded=published_time,
                 uploadedTime="?",
                 likes=str(num_repr(likes)),
                 dislikes=str(num_repr(dislikes)),
-                commentCount="?",  # str(num_repr(int(stats.get('commentCount', 0)))),
-                viewCount=item["viewCount"]["text"]
-                if "viewCount" in item.keys()
-                else "?",
-            )  # str(num_repr(int(stats.get('viewCount', 0)))))
+                commentCount="?",
+                viewCount=view_count,
+            )
             songs.append(cursong)
 
         except Exception as e:
-            import traceback
+            util.dbg(f"Error during metadata extraction for {ytid}: {str(e)}")
+            continue
 
-            traceback.print_exception(type(e), e, e.__traceback__)
-            input("Press any key to continue...")
-            util.dbg(json.dumps(item, indent=2))
-            util.dbg(
-                "Error during metadata extraction/instantiation of "
-                + "search result {}\n{}".format(ytid, e)
-            )
+    # return video objects
+    return songs
 
     # return video objects
     return songs
@@ -531,7 +531,7 @@ def user_more(num):
         channel_id = g.meta.get(item.ytid, {}).get("uploader")
         user = g.meta.get(item.ytid, {}).get("uploaderName")
     else:
-        paf = util.get_pafy(item)
+        paf = util.get_metadata(item)
         user, channel_id = channelfromname(paf.author)
 
     usersearch_id(user, channel_id, "")
@@ -562,10 +562,10 @@ def mix(num):
         if item is None:
             g.message = util.F("invalid item")
             return
-        item = util.get_pafy(item)
+        item = util.get_metadata(item)
         # Mix playlists are made up of 'RD' + video_id
         try:
-            plist("RD" + item.videoid)
+            plist("RD" + item.ytid)
         except OSError:
             g.message = util.F("no mix")
 
@@ -593,10 +593,10 @@ def yt_url(url: str, print_title: bool = False):
     v_title = None
     for url in url_list:
         try:
-            v_id = pafy.extract_video_id(url)
+            v_id = extractor.extract_video_id(url)
             if v_id in v_ids:
                 continue
-            p = pafy.get_video_info(v_id)
+            p = extractor.get_video_info(v_id)
         except (IOError, ValueError, Exception) as e:
             g.message = c.r + str(e) + c.w
             g.content = g.content or content.generate_songlist_display(

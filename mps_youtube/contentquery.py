@@ -1,16 +1,16 @@
 """
-ContentQuery is an abstraction layer between the the pafy.call_gdata
+ContentQuery is an abstraction layer between the the extractor.call_gdata
 and the listViews.
 
 It lets you treat A query as a list of all the results, even though
 data is only queried when requested.
 """
 
-from . import util, pafy
+from . import util, extractor
 
 
 class ContentQuery:
-    """A wrapper for pafy.call_gdata. I lets you treat a search as a list,
+    """A wrapper for extractor.call_gdata. I lets you treat a search as a list,
     but the results will only be fetched when needed.
     """
 
@@ -60,7 +60,7 @@ class ContentQuery:
 
         # Run query
         util.dbg("CQ.query", self.query)
-        data = pafy.channel_search(self.query)  # pafy.call_gdata(self.api, qry)
+        data = extractor.channel_search(self.query)  # extractor.call_gdata(self.api, qry)
 
         self.maxresults = len(
             data

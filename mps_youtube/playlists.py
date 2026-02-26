@@ -2,7 +2,7 @@ import os
 import sys
 import pickle
 
-from . import g, c, screen, util, pafy
+from . import g, c, screen, util, extractor
 from .playlist import Playlist, Video
 
 
@@ -79,7 +79,7 @@ def read_m3u(m3u):
                 ):
                     try:
                         expect_ytid = False
-                        ytid = pafy.extract_video_id(line).strip()
+                        ytid = extractor.extract_video_id(line).strip()
                         songs.append(Video(ytid, title, int(duration)))
                     except ValueError as ex:
                         util.dbg(c.r + str(ex) + c.w)
@@ -89,8 +89,8 @@ def read_m3u(m3u):
             for line in plf:
                 if not line.startswith("#"):
                     try:
-                        p = util.get_pafy(line)
-                        songs.append(Video(p.videoid, p.title, p.length))
+                        p = util.get_metadata(line)
+                        songs.append(Video(p.ytid, p.title, p.length))
                     except (IOError, ValueError) as e:
                         util.dbg(c.r + "Error loading video: " + str(e) + c.w)
 

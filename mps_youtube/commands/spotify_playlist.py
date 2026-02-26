@@ -13,7 +13,7 @@ except ImportError:
     has_spotipy = False
 
 
-from .. import c, g, screen, content, config, util
+from .. import c, g, screen, content, config, util, extractor
 from . import command
 from .songlist import paginatesongs
 from .search import get_tracks_from_json
@@ -145,7 +145,7 @@ def _match_tracks(tracks):
         util.dbg(q)
 
         # perform fetch
-        wdata = pafy.search_videos(q, int(config.PAGES.get))
+        wdata = extractor.search_videos(q, int(config.PAGES.get))
         results = get_tracks_from_json(wdata)
 
         if not results:

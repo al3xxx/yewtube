@@ -61,8 +61,8 @@ def init():
             screen.update()
             input("Press Enter to go back to main menu.")
 
-    # Make pafy use the same api key
-    # pafy.set_api_key(config.API_KEY.get)
+    # Make extractor use the same api key
+    # extractor.set_api_key(config.API_KEY.get)
 
     _init_readline()
     cache.load()
@@ -236,7 +236,7 @@ def _process_cl_args():
     if args.logging or os.environ.get("mpsytlog") == "1" or g.debug_mode:
         logfile = os.path.join(tempfile.gettempdir(), "mpsyt.log")
         logging.basicConfig(level=logging.DEBUG, filename=logfile)
-        logging.getLogger("pafy").setLevel(logging.DEBUG)
+        logging.getLogger("extractor").setLevel(logging.DEBUG)
 
     if args.no_autosize:
         g.detectable_size = False
@@ -256,11 +256,11 @@ def _process_cl_args():
 
 def _get_version_info():
     """Return version and platform info."""
-    # pafy_version = pafy.__version__
+    # extractor_version = extractor.__version__
     # youtube_dl_version = None
-    # if tuple(map(int, pafy_version.split('.'))) >= (0, 5, 0):
-    #     pafy_version += " (" + pafy.backend + " backend)"
-    #     if pafy.backend == "youtube-dl":
+    # if tuple(map(int, extractor_version.split('.'))) >= (0, 5, 0):
+    #     extractor_version += " (" + extractor.backend + " backend)"
+    #     if extractor.backend == "youtube-dl":
 
     from yt_dlp.version import __version__ as ytdlp_version
 

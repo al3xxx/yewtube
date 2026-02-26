@@ -203,8 +203,8 @@ def check_console_width(val):
 #         urlopen(url + "?" + urlencode(query)).read()
 #         message = "The key, '" + key + "' will now be used for API requests."
 #
-#         # Make pafy use the same api key
-#         pafy.set_api_key(Config.API_KEY.get)
+#         # Make extractor use the same api key
+#         extractor.set_api_key(Config.API_KEY.get)
 #
 #         return dict(valid=True, message=message)
 #     except HTTPError:

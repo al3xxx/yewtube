@@ -55,5 +55,16 @@ This document tracks the significant refactoring and modernizations applied to t
 - **MPlayer Modernization**: Restored standard terminal interactivity (`stdin`) to the `mplayer` backend, ensuring parity with `mpv` for keyboard controls like pause and seek.
 - **Diagnostic Transparency**: Improved exception handling in metadata retrieval to surface original error messages, aiding in the diagnosis of private or geo-restricted content.
 
+## 8. Extractor Modernization (yt-dlp Transition)
+- **Unified Extraction Layer**: Replaced the legacy `pafy` module with a modern `extractor.py` abstraction. This layer directly interfaces with `yt-dlp` and `youtubesearchpython`, providing a stable and high-performance foundation for all media operations.
+- **VideoInfo Abstraction**: Implemented a standardized `VideoInfo` class that ensures consistent metadata access across the entire application, eliminating brittle dictionary-key dependencies.
+- **Enhanced Stream Selection**:
+    - Leveraged `yt-dlp`'s detailed format metadata for more accurate stream identification (audio vs mixed vs video-only).
+    - Improved resolution-based filtering and bitrate-aware sorting for higher quality playback.
+    - Added resilient expiry parsing for stream URLs to optimize playback start times.
+- **Global terminology migration**: Conducted a project-wide cleanup to remove all legacy `pafy` naming from imports, variables, and global caches (e.g., `g.pafs` -> `g.metadata_cache`).
+- **Improved Metadata Retrieval**: Unified search and playlist metadata processing to use modern scraping techniques, significantly reducing "no results" or "extraction failed" errors.
+- **Search Fallback Mechanism**: Implemented a robust fallback to `yt-dlp` for video searches when `youtubesearchpython` crashes or fails (common with high-profile artists like 'Lana Del Rey' due to complex shelf renderers).
+
 ---
-*Last updated: February 24, 2026*
+*Last updated: February 25, 2026*

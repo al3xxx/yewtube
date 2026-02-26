@@ -8,7 +8,7 @@ import subprocess
 from urllib.request import urlopen
 from urllib.error import HTTPError
 
-from .. import g, c, screen, streams, content, config, util, pafy
+from .. import g, c, screen, streams, content, config, util, extractor
 from . import command, PL
 from .search import yt_url, user_pls
 from .songlist import dump, plist
@@ -90,7 +90,7 @@ def download(dltype, num):
         # perform download(s)
         # dl_filenames = [args[1]]
         # f = _download(*args, **kwargs)
-        success = pafy.download_video(
+        success = extractor.download_video(
             song.ytid,
             config.DDIR.get,
             True if dltype.startswith("da") else False,
@@ -204,7 +204,7 @@ def down_plist(dltype, parturl):
 
     plist(parturl)
     dump(False)
-    title = g.pafy_pls[parturl][0].title
+    title = g.playlist_cache[parturl][0].title
     # Remove double quotes for convenience
     subdir = util.sanitize_filename(title.replace('"', ""))
     down_many(dltype, "1-", subdir=subdir)
@@ -531,7 +531,7 @@ def get_dl_data(song, mediatype="any"):
         """Return size in MB."""
         return str(int(x / (1024**2)))
 
-    p = util.get_pafy(song)
+    p = util.get_metadata(song)
     dldata = []
     text = " [Fetching stream info] >"
     streamlist = [x for x in p.allstreams]

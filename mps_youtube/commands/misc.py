@@ -15,7 +15,7 @@ try:
 except ImportError:
     has_pyperclip = False
 
-from .. import g, c, __version__, content, screen, cache, pafy
+from .. import g, c, __version__, content, screen, cache, extractor
 from .. import streams, history, config, util
 from ..helptext import get_help
 from ..content import generate_songlist_display, logo, qrcode_display
@@ -26,7 +26,7 @@ from .songlist import paginatesongs
 @command(r"clearcache")
 def clearcache():
     """Clear cached items - for debugging use."""
-    g.pafs = {}
+    g.metadata_cache = {}
     g.streams = {}
     util.dbg("%scache cleared%s", c.p, c.w)
     g.message = "cache cleared"
@@ -89,7 +89,7 @@ def _format_comment(n, qnt, author_name, published_date, content, reply=False):
 
 
 def _fetch_commentreplies(parentid):
-    # return pafy.call_gdata('comments', {
+    # return extractor.call_gdata('comments', {
     #     'parentId': parentid,
     #     'part': 'snippet',
     #     'textFormat': 'plainText',
@@ -111,7 +111,7 @@ def fetch_comments(item):
 
     # jsdata = None
     try:
-        all_comments = pafy.get_comments(ytid)
+        all_comments = extractor.get_comments(ytid)
     except Exception:
         raise
     # coms = [x.get('snippet', {}) for x in jsdata.get('items', [])]
@@ -235,15 +235,15 @@ def video_info(num):
         p = g.ytpls[int(num) - 1]
 
         # fetch the playlist item as it has more metadata
-        if p["link"] in g.pafy_pls:
-            ytpl = g.pafy_pls[p["link"]][0]
+        if p["link"] in g.playlist_cache:
+            ytpl = g.playlist_cache[p["link"]][0]
         else:
             g.content = logo(col=c.g)
             g.message = "Fetching playlist info.."
             screen.update()
-            util.dbg("%sFetching playlist using pafy%s", c.y, c.w)
-            ytpl = pafy.get_playlist2(p["link"])
-            g.pafy_pls[p["link"]] = (ytpl, util.IterSlicer(ytpl))
+            util.dbg("%sFetching playlist using extractor%s", c.y, c.w)
+            ytpl = extractor.get_playlist2(p["link"])
+            g.playlist_cache[p["link"]] = (ytpl, util.IterSlicer(ytpl))
 
         ytpl_desc = ytpl.description
         g.content = generate_songlist_display()
@@ -266,35 +266,52 @@ def video_info(num):
         screen.writestatus("Fetching video metadata..")
         item = g.model[int(num) - 1]
         streams.get(item)
-        p = pafy.get_video_info(item.ytid)
+        p = extractor.get_video_info(item.ytid)
         # pub = datetime.strptime(str(p.published), "%Y-%m-%d %H:%M:%SZ")
         # pub = util.utc2local(pub)
         screen.writestatus("Fetched")
         out = c.ul + "Video Info" + c.w + "\n\n"
-        out += p["title"] or ""
+        out += p.title or ""
         out += "\n\nDescription:\n\n" + str(p.get("description", "")) + "\n"
-        out += "\nKeywords: " + str(p["keywords"]) + "\n"
-        out += "\nIs Live Now    : " + str(p["isLiveNow"])
+        out += "\nKeywords: " + str(p.get("keywords", [])) + "\n"
+        out += "\nIs Live Now    : " + str(p.get("isLiveNow", False))
+        
+        duration_text = "0"
+        duration_data = p.get("duration")
+        if isinstance(duration_data, dict):
+            duration_text = duration_data.get("secondsText", "0")
+        elif isinstance(duration_data, str):
+            duration_text = str(util.parse_video_length(duration_data))
+            
         out += "\nDuration       : " + str(
-            timedelta(seconds=int(p["duration"]["secondsText"]))
+            timedelta(seconds=int(duration_text))
         )
-        out += "\nView count     : " + "{:,}".format(
-            int(p["viewCount"]["text"])
-        )
-        out += "\nAuthor         : " + str(
-            p["channel"]["name"] + " ~ " + p["channel"]["link"]
-        )
-        out += "\nPublished Date : " + str(p["publishDate"])
-        out += "\nUploaded Date  : " + str(p["uploadDate"])
-        out += "\nRating         : " + str(p["averageRating"])
-        out += "\nLikes          : " + "{:,}".format(p.get("likes", 0))
-        out += "\nDislikes       : " + "{:,}".format(p.get("dislikes", 0))
-        out += "\nCategory       : " + str(p["category"])
-        out += "\nFamily Safe    : " + str(p["isFamilySafe"])
-        out += "\nLink           : " + str(p["link"])
+        
+        view_count = "0"
+        view_data = p.get("viewCount")
+        if isinstance(view_data, dict):
+            view_count = view_data.get("text", "0").replace(",", "")
+        elif isinstance(view_data, str):
+            view_count = view_data.replace(",", "")
+            
+        out += "\nView count     : " + "{:,}".format(int(re.sub(r"\D", "", view_count) or 0))
+        
+        author_name = p.author
+        channel_data = p.get("channel", {})
+        channel_link = channel_data.get("link", "") if isinstance(channel_data, dict) else ""
+        out += "\nAuthor         : " + str(author_name + " ~ " + channel_link)
+        
+        out += "\nPublished Date : " + str(p.get("publishDate", "?"))
+        out += "\nUploaded Date  : " + str(p.get("uploadDate", "?"))
+        out += "\nRating         : " + str(p.rating)
+        out += "\nLikes          : " + "{:,}".format(p.likes)
+        out += "\nDislikes       : " + "{:,}".format(p.dislikes)
+        out += "\nCategory       : " + str(p.get("category", "?"))
+        out += "\nFamily Safe    : " + str(p.get("isFamilySafe", "?"))
+        out += "\nLink           : " + str(p.get("link", "https://youtube.com/watch?v=" + p.ytid))
         if config.SHOW_QRCODE.get:
             out += "\n" + qrcode_display(
-                "https://youtube.com/watch?v=%s" % p.videoid
+                "https://youtube.com/watch?v=%s" % p.ytid
             )
 
         out += "\n\n%s[%sPress enter to go back%s]%s" % (c.y, c.w, c.y, c.w)
@@ -310,8 +327,8 @@ def stream_info(num):
         screen.writestatus("Fetching stream metadata..")
         item = g.model[int(num) - 1]
         streams.get(item)
-        p = util.get_pafy(item)
-        setattr(p, "ytid", p.videoid)
+        p = util.get_metadata(item)
+        setattr(p, "ytid", p.ytid)
         details = player.stream_details(p)[1]
         screen.writestatus("Fetched")
         out = "\n\n" + c.ul + "Stream Info" + c.w + "\n"

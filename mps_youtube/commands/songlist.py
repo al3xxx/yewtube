@@ -2,7 +2,7 @@ import math
 import random
 
 
-from .. import g, c, screen, streams, content, util, pafy
+from .. import g, c, screen, streams, content, util, extractor
 from ..playlist import Video
 from . import command, PL
 
@@ -92,13 +92,13 @@ def paginatesongs(
 def plist(parturl):
     """Retrieve YouTube playlist."""
 
-    if parturl in g.pafy_pls:
-        ytpl, plitems = g.pafy_pls[parturl]
+    if parturl in g.playlist_cache:
+        ytpl, plitems = g.playlist_cache[parturl]
     else:
-        util.dbg("%sFetching playlist using pafy%s", c.y, c.w)
-        ytpl = pafy.get_playlist(parturl)
+        util.dbg("%sFetching playlist using extractor%s", c.y, c.w)
+        ytpl = extractor.get_playlist(parturl)
         plitems = util.IterSlicer(ytpl.videos)
-        g.pafy_pls[parturl] = (ytpl, plitems)
+        g.playlist_cache[parturl] = (ytpl, plitems)
 
     def pl_seg(s, e):
         return [

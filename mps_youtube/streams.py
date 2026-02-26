@@ -1,14 +1,14 @@
 import time
 import threading
 from urllib.request import urlopen
-from . import pafy
+from . import extractor
 from . import g, c, screen, config, util
 
 
 def prune():
     """Keep cache size in check."""
-    while len(g.pafs) > g.max_cached_streams:
-        g.pafs.popitem(last=False)
+    while len(g.metadata_cache) > g.max_cached_streams:
+        g.metadata_cache.popitem(last=False)
 
     while len(g.streams) > g.max_cached_streams:
         g.streams.popitem(last=False)
@@ -17,14 +17,14 @@ def prune():
 
     now = time.time()
     oldpafs = [
-        k for k in g.pafs if g.pafs[k] is not None and g.pafs[k].expiry < now
+        k for k in g.metadata_cache if g.metadata_cache[k] is not None and g.metadata_cache[k].expiry < now
     ]
 
     if len(oldpafs):
-        util.dbg(c.r + "%s old pafy items pruned%s", len(oldpafs), c.w)
+        util.dbg(c.r + "%s old extractor items pruned%s", len(oldpafs), c.w)
 
     for oldpaf in oldpafs:
-        g.pafs.pop(oldpaf, 0)
+        g.metadata_cache.pop(oldpaf, 0)
 
     oldstreams = [
         k
@@ -38,11 +38,11 @@ def prune():
     for oldstream in oldstreams:
         g.streams.pop(oldstream, 0)
 
-    util.dbg(c.b + "paf: %s, streams: %s%s", len(g.pafs), len(g.streams), c.w)
+    util.dbg(c.b + "paf: %s, streams: %s%s", len(g.metadata_cache), len(g.streams), c.w)
 
 
 def get(vid, force=False, callback=None, threeD=False):
-    """Get all streams as a dict.  callback function passed to get_pafy."""
+    """Get all streams as a dict.  callback function passed to get_extractor."""
     now = time.time()
     ytid = vid.ytid
     have_stream = g.streams.get(ytid) and (
@@ -59,47 +59,48 @@ def get(vid, force=False, callback=None, threeD=False):
         )
         return g.streams.get(ytid)["meta"]
 
-    # p = None#util.get_pafy(vid, force=force, callback=callback)
+    # p = None#util.get_metadata(vid, force=force, callback=callback)
     # ps = p.allstreams if threeD else [x for x in p.allstreams if not x.threed]
-    ps = pafy.get_video_streams(ytid)
+    ps = extractor.get_video_streams(ytid)
 
-    try:
-        # test urls are valid
-        [x["url"] for x in ps]
+    streams = []
+    for s in ps:
+        # Determine stream type (audio, video, or both)
+        vcodec = s.get("vcodec", "none")
+        acodec = s.get("acodec", "none")
+        
+        if vcodec == "none" and acodec != "none":
+            mtype = "audio"
+        elif vcodec != "none" and acodec != "none":
+            mtype = "video" # Mixed
+        elif vcodec != "none" and acodec == "none":
+            mtype = "video" # Video only
+        else:
+            mtype = "?"
 
-    except TypeError:
-        # refetch if problem
-        util.dbg("%s****Type Error in get_streams. Retrying%s", c.r, c.w)
-        p = util.get_pafy(vid, force=True, callback=callback)
-        ps = (
-            p.allstreams
-            if threeD
-            else [x for x in p.allstreams if not x.threed]
-        )
-
-    streams = [
-        {
+        streams.append({
             "url": s["url"],
             "ext": s["ext"],
-            "quality": s["resolution"],
-            "rawbitrate": s.get("bitrate", -1),
-            "mtype": "audio"
-            if "audio" in s["resolution"]
-            else ("video" if s["acodec"] != "none" else "?"),
+            "quality": s.get("resolution") or f"{s.get('width')}x{s.get('height')}",
+            "rawbitrate": s.get("tbr") or s.get("abr") or -1,
+            "mtype": mtype,
             "size": int(
                 s.get("filesize")
                 if s.get("filesize") is not None
                 else s.get("filesize_approx", -1)
             ),
-        }
-        for s in ps
-    ]
+        })
 
-    if "manifest" in streams[0]["url"]:
-        expiry = float(streams[0]["url"].split("/expire/")[1].split("/")[0])
-    else:
-        temp = streams[0]["url"].split("expire=")[1]
-        expiry = float(temp[: temp.find("&")])
+    # Find expiry in URL if possible
+    expiry = now + 3600 # Default fallback
+    try:
+        if "manifest" in streams[0]["url"]:
+            expiry = float(streams[0]["url"].split("/expire/")[1].split("/")[0])
+        elif "expire=" in streams[0]["url"]:
+            temp = streams[0]["url"].split("expire=")[1]
+            expiry = float(temp[: temp.find("&")])
+    except (IndexError, ValueError):
+        pass
 
     g.streams[ytid] = dict(expiry=expiry, meta=streams)
     prune()
@@ -113,11 +114,20 @@ def select(slist, q=0, audio=False, m4a_ok=True, maxres=None):
 
     def okres(x):
         """Return True if resolution is within user specified maxres."""
-        return int(x["quality"].split("x")[1]) <= maxres
+        try:
+            res = x["quality"].split("x")
+            height = int(res[1] if len(res) > 1 else res[0].strip("p"))
+            return height <= maxres
+        except (ValueError, IndexError, AttributeError):
+            return True
 
     def getq(x):
         """Return height aspect of resolution, eg 640x480 => 480."""
-        return int(x["quality"].split("x")[1])
+        try:
+            res = x["quality"].split("x")
+            return int(res[1] if len(res) > 1 else res[0].strip("p"))
+        except (ValueError, IndexError, AttributeError):
+            return 0
 
     def getbitrate(x):
         """Return the bitrate of a stream."""
@@ -185,10 +195,12 @@ def _get_content_length(url, preloading=False):
     """Return content length of a url."""
     prefix = "preload: " if preloading else ""
     util.dbg(c.y + prefix + "getting content-length header" + c.w)
-    response = urlopen(url)
-    headers = response.headers
-    cl = headers["content-length"]
-    return int(cl)
+    try:
+        with urlopen(url, timeout=5) as response:
+            return int(response.headers.get("content-length", -1))
+    except Exception as e:
+        util.dbg("%sfailed to get content-length: %s", prefix, e)
+        return -1
 
 
 def preload(song, delay=2, override=False):

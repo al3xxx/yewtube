@@ -196,47 +196,48 @@ def F(key, nb=0, na=0, textlib=None):
     return "\n" * nb + text + c.w + "\n" * na
 
 
-def get_pafy(item, force=False, callback=None):
+from . import extractor
+
+
+def get_metadata(item, force=False, callback=None):
     """
-    Get pafy object for an item.
+    Get metadata (VideoInfo) object for an item.
 
     :param item: video to retrieve
     :type item: :class:`mps_youtube.playlist.Video` or str
     :param force: ignore cache and retrieve anyway
     :type force: bool
-    :param callback: callpack to pass to pafy
-    :type callback: func
-    :rtype: Pafy
+    :param callback: callback (legacy, for compatibility)
+    :rtype: VideoInfo
     """
+    # Import here to avoid circular dependency
+    from .playlist import Video
 
     if isinstance(item, Video):
         ytid = item.ytid
     else:
         ytid = item
-    cached = g.pafs.get(ytid)
+
+    cached = g.metadata_cache.get(ytid)
 
     if not force and cached and cached.expiry > time.time():
-        dbg("get pafy cache hit for %s", cached.title)
+        dbg("metadata cache hit for %s", cached.title)
         cached.fresh = False
         return cached
 
     else:
         try:
-            p = None  # pafy.new(ytid, callback=callback_fn)
+            p = extractor.get_video_info(ytid)
 
-        except IOError as e:
-            if "pafy" in str(e):
-                dbg(c.p + "retrying failed pafy get: " + ytid + c.w)
-                p = None  # pafy.new(ytid, callback=callback)
+        except Exception as e:
+            dbg(c.p + "Failed to get metadata: " + str(e) + c.w)
+            raise
 
-            else:
-                raise
-
-        g.pafs[ytid] = p
+        g.metadata_cache[ytid] = p
         p.fresh = True
         thread = "preload: " if not callback else ""
-        dbg("%s%sgot new pafy object: %s%s" % (c.y, thread, p.title[:26], c.w))
-        dbg("%s%sgot new pafy object: %s%s" % (c.y, thread, p.videoid, c.w))
+        dbg("%s%sgot metadata: %s%s" % (c.y, thread, p.title[:26], c.w))
+        dbg("%s%sgot metadata: %s%s" % (c.y, thread, p.ytid, c.w))
         return p
 
 
@@ -667,9 +668,12 @@ class CommandCompleter(Completer):
 
 def parse_video_length(duration):
     """
-    Converts HH:MM:SS to a single integer .i.e. total number of seconds
+    Converts HH:MM:SS or seconds (int/float) to a single integer .i.e. total number of seconds
     """
-    if duration:
+    if isinstance(duration, (int, float)):
+        return int(duration)
+
+    if duration and isinstance(duration, str):
         duration_tokens = duration.split(":")
         if len(duration_tokens) == 2:
             return int(duration_tokens[0]) * 60 + int(duration_tokens[1])
@@ -679,7 +683,10 @@ def parse_video_length(duration):
                 + int(duration_tokens[1]) * 60
                 + int(duration_tokens[2])
             )
-        return int(duration_tokens[0])
+        try:
+            return int(duration_tokens[0])
+        except ValueError:
+            return 10
     else:
         return 10
 

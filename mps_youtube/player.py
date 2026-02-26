@@ -10,7 +10,7 @@ from urllib.error import HTTPError, URLError
 
 from . import c, config, content, g, history, screen, streams, util
 from .commands import lastfm
-from . import pafy
+from . import extractor
 
 mswin = os.name == "nt"
 
@@ -74,7 +74,7 @@ class BasePlayer:
 
             try:
                 if config.SHOW_VIDEO and config.SHOW_SUBTITLES:
-                    self.subtitle_path = pafy.get_subtitles(
+                    self.subtitle_path = extractor.get_subtitles(
                         self.song.ytid, config.DDIR.get
                     )
                 self.video, self.stream, self.override = stream_details(
@@ -394,7 +394,7 @@ def stream_details(song, failcount=0, override=False, softrepeat=False):
                 softrepeat=softrepeat,
             )
 
-        elif "pafy" in str(e):
+        elif "extractor" in str(e):
             g.message = str(e) + " - " + song.ytid
             return
 

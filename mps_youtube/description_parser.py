@@ -89,9 +89,9 @@ def artist_from_title(title):
     query["maxResults"] = 50
     query["part"] = "snippet"
 
-    from . import pafy
+    from . import extractor
 
-    results = pafy.search_videos(title, 1)
+    results = extractor.search_videos(title, 1)
     titles = [x["title"].upper() for x in results]
 
     alts = {}

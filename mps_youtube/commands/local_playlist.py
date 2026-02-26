@@ -103,8 +103,8 @@ def save_last():
 
         # save using artist name in postion 1
         if g.model:
-            if g.selected_pafy_pls_id:  # if a playlist was selected
-                saveas = g.pafy_pls[g.selected_pafy_pls_id][0].info["info"][
+            if g.selected_playlist_id:  # if a playlist was selected
+                saveas = g.playlist_cache[g.selected_playlist_id][0].info["info"][
                     "title"
                 ]
             else:  # user didn't selected a playlist
@@ -157,7 +157,7 @@ def open_save_view(action, name):
             g.content = content.generate_songlist_display()
 
         else:
-            if g.selected_pafy_pls_id:  # if a playlist was selected by user:
+            if g.selected_playlist_id:  # if a playlist was selected by user:
                 g.userpl[name] = Playlist(
                     name,
                     [
@@ -166,7 +166,7 @@ def open_save_view(action, name):
                             i["title"],
                             parse_video_length(i["duration"]),
                         )
-                        for i in g.pafy_pls[g.selected_pafy_pls_id][0].videos
+                        for i in g.playlist_cache[g.selected_playlist_id][0].videos
                     ],
                 )
             else:  # user created custom playlist and never opened it and now wants to save it

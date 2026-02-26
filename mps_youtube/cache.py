@@ -28,9 +28,9 @@ def load():
             else:
                 g.streams = cached
 
-            if "pafy" in cached:
+            if "extractor" in cached:
                 pass
-                # pafy.load_cache(cached['pafy'])
+                # extractor.load_cache(cached['extractor'])
 
             dbg(c.g + "%s cached streams imported%s", str(len(g.streams)), c.w)
 
@@ -46,7 +46,7 @@ def save():
         version=CACHE_VERSION,
         streams=g.streams,
         userdata=g.username_query_cache,
-        # ,pafy=pafy.dump_cache()
+        # ,extractor=extractor.dump_cache()
     )
 
     with open(g.CACHEFILE, "wb") as cf:
