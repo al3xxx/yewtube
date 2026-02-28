@@ -9,9 +9,28 @@ from urllib.parse import parse_qs, urlparse
 import urllib.request
 import urllib.error
 import typing as T
+from datetime import datetime, timezone
 
 from . import util
 import yt_dlp
+
+
+def _format_published_time(entry):
+    """Helper to get a standard ISO8601 string from yt-dlp entry."""
+    # Try timestamp first (unix epoch)
+    ts = entry.get("timestamp")
+    if ts:
+        return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # Try upload_date (YYYYMMDD)
+    ud = entry.get("upload_date")
+    if ud and len(ud) == 8:
+        try:
+            return f"{ud[:4]}-{ud[4:6]}-{ud[6:]}T00:00:00Z"
+        except Exception:
+            pass
+
+    return None
 
 
 class VideoInfo:
@@ -126,12 +145,47 @@ def search_videos(query, pages):
     return _search_videos_ytdl(query, pages)
 
 
+def _enrich_results_with_dates(url, results):
+    """Scrape relative published times from a YouTube page and enrich results."""
+    try:
+        # Force English locale via URL parameter and header
+        if "?" in url:
+            url += "&hl=en"
+        else:
+            url += "?hl=en"
+
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "en-US,en;q=0.5"}
+        )
+        with urllib.request.urlopen(req, timeout=5) as response:
+            html = response.read().decode(errors="ignore")
+            # Regex to find videoId and publishedTimeText
+            # Note: "videoId":"ID" can appear before or after publishedTimeText depending on the renderer
+            # We use a broad search and map by ID.
+            pattern = r'"videoId":"([\w-]{11})".*?"publishedTimeText":\{"simpleText":"([^"]+)"\}'
+            matches = re.findall(pattern, html)
+            dates = {vid: age for vid, age in matches}
+            
+            # Alternative pattern for different renderers
+            alt_pattern = r'"publishedTimeText":\{"simpleText":"([^"]+)"\}.*?"videoId":"([\w-]{11})"'
+            alt_matches = re.findall(alt_pattern, html)
+            for age, vid in alt_matches:
+                if vid not in dates:
+                    dates[vid] = age
+
+            for v in results:
+                if v["id"] in dates:
+                    v["publishedTime"] = dates[v["id"]]
+    except Exception as e:
+        util.dbg("Enrichment failed for %s: %s", url, e)
+
+
 def _search_videos_ytdl(query, pages):
     """Search using yt-dlp with optimized flags."""
     count = pages * 50
     ydl_opts = get_ydl_opts({
         "extract_flat": True,
-        "allowed_extractors": ["youtube:search", "youtube"],
+        "allowed_extractors": ["youtube:search", "youtube", "youtube:search_url", "youtube:playlist", "youtube:tab"],
         "lazy_extract": True,
         "cachedir": False,
     })
@@ -160,7 +214,7 @@ def _search_videos_ytdl(query, pages):
                     "type": "video",
                     "id": entry.get("id"),
                     "title": entry.get("title"),
-                    "publishedTime": "Unknown",
+                    "publishedTime": _format_published_time(entry) or "Unknown",
                     "duration": duration_str,
                     "viewCount": {
                         "text": view_count_str,
@@ -172,6 +226,11 @@ def _search_videos_ytdl(query, pages):
                     },
                     "link": entry.get("url") or f"https://www.youtube.com/watch?v={entry.get('id')}",
                 })
+            
+            # Enrich with relative dates from the search page
+            search_url = f"https://www.youtube.com/results?search_query={urllib.parse.quote(query)}"
+            _enrich_results_with_dates(search_url, results)
+            
             return results
     except Exception as e:
         util.dbg("yt-dlp search fallback failed: %s", str(e))
@@ -186,7 +245,7 @@ def channel_search(query):
     
     ydl_opts = get_ydl_opts({
         "extract_flat": True,
-        "allowed_extractors": ["youtube:search", "youtube"],
+        "allowed_extractors": ["youtube:search", "youtube", "youtube:search_url", "youtube:playlist", "youtube:tab"],
         "lazy_extract": True,
         "cachedir": False,
     })
@@ -195,13 +254,15 @@ def channel_search(query):
             info = ydl.extract_info(url, download=False)
             results = []
             for entry in info.get("entries", []):
+                description = entry.get("description", "")
                 results.append({
                     "type": "channel",
                     "id": entry.get("id"),
                     "title": entry.get("title") or entry.get("channel"),
                     "thumbnails": entry.get("thumbnails"),
                     "videoCount": entry.get("video_count"),
-                    "description": entry.get("description", ""),
+                    "description": description,
+                    "descriptionSnippet": [{"text": description}] if description else None,
                     "link": entry.get("url") or f"https://www.youtube.com/channel/{entry.get('id')}",
                 })
             return results
@@ -217,7 +278,7 @@ def playlist_search(query):
     
     ydl_opts = get_ydl_opts({
         "extract_flat": True,
-        "allowed_extractors": ["youtube:search", "youtube"],
+        "allowed_extractors": ["youtube:search", "youtube", "youtube:search_url", "youtube:playlist", "youtube:tab"],
         "lazy_extract": True,
         "cachedir": False,
     })
@@ -250,7 +311,7 @@ def get_playlist(playlist_id):
     url = f"https://www.youtube.com/playlist?list={playlist_id}"
     ydl_opts = get_ydl_opts({
         "extract_flat": True,
-        "allowed_extractors": ["youtube:search", "youtube"],
+        "allowed_extractors": ["youtube:search", "youtube", "youtube:search_url", "youtube:playlist", "youtube:tab"],
         "lazy_extract": True,
         "cachedir": False,
     })
@@ -290,10 +351,12 @@ def get_playlist(playlist_id):
 
 
 def get_video_title_suggestions(query):
-    """Get search suggestions using direct Google API call."""
+    """Get search suggestions using direct Google API call in English."""
     encoded_query = urllib.parse.quote(query)
-    url = f"https://suggestqueries.google.com/complete/search?client=youtube&ds=yt&q={encoded_query}"
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    url = f"https://suggestqueries.google.com/complete/search?client=youtube&ds=yt&hl=en&q={encoded_query}"
+    req = urllib.request.Request(
+        url, headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "en-US,en;q=0.5"}
+    )
     try:
         with urllib.request.urlopen(req, timeout=5) as response:
             data = json.loads(response.read().decode())
@@ -318,7 +381,7 @@ def all_videos_from_channel(channel_id):
     url = f"https://www.youtube.com/channel/{channel_id}/videos"
     ydl_opts = get_ydl_opts({
         "extract_flat": True,
-        "allowed_extractors": ["youtube:search", "youtube"],
+        "allowed_extractors": ["youtube:search", "youtube", "youtube:search_url", "youtube:playlist", "youtube:tab"],
         "lazy_extract": True,
         "cachedir": False,
     })
@@ -326,6 +389,7 @@ def all_videos_from_channel(channel_id):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             videos = []
+            channel_name = info.get("title") or info.get("uploader")
             for entry in info.get("entries", []):
                 duration = entry.get("duration")
                 if duration:
@@ -338,13 +402,19 @@ def all_videos_from_channel(channel_id):
                 videos.append({
                     "id": entry.get("id"),
                     "title": entry.get("title"),
+                    "description": entry.get("description", ""),
+                    "publishedTime": _format_published_time(entry) or "Unknown",
                     "duration": duration_str,
                     "channel": {
-                        "name": entry.get("uploader") or entry.get("channel"),
-                        "id": entry.get("uploader_id") or entry.get("channel_id"),
+                        "name": entry.get("uploader") or entry.get("channel") or channel_name,
+                        "id": entry.get("uploader_id") or entry.get("channel_id") or channel_id,
                     },
                     "link": f"https://www.youtube.com/watch?v={entry.get('id')}",
                 })
+            
+            # Enrich with relative dates from the videos tab
+            _enrich_results_with_dates(url, videos)
+            
             return videos
     except Exception as e:
         util.dbg("Failed to get channel videos for %s: %s", channel_id, str(e))
@@ -383,17 +453,25 @@ def get_comments(video_id):
         return []
 
 
+import concurrent.futures
+
 def get_video_info(video_id):
-    """Get detailed video info including likes/dislikes."""
+    """Get detailed video info including likes/dislikes in parallel."""
     try:
-        # Instead of Video.getInfo (youtubesearchpython), use yt-dlp
-        ydl_opts = get_ydl_opts()
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(video_id, download=False)
-            response = return_dislikes(video_id)
-            info["likes"] = response["likes"]
-            info["dislikes"] = response["dislikes"]
-            info["averageRating"] = response["rating"]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            # Start dislike fetch in background
+            dislike_future = executor.submit(return_dislikes, video_id)
+
+            # Extract info via yt-dlp (main task)
+            ydl_opts = get_ydl_opts()
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(video_id, download=False)
+
+            # Wait for dislikes and merge
+            dislikes = dislike_future.result()
+            info["likes"] = dislikes["likes"]
+            info["dislikes"] = dislikes["dislikes"]
+            info["averageRating"] = dislikes["rating"]
             return VideoInfo(info)
     except Exception as e:
         raise ExtractionError(f"Can't get video info: {str(e)}")
@@ -448,7 +526,7 @@ def all_playlists_from_channel(channel_id):
     url = f"https://www.youtube.com/channel/{channel_id}/playlists"
     ydl_opts = get_ydl_opts({
         "extract_flat": True,
-        "allowed_extractors": ["youtube:search", "youtube"],
+        "allowed_extractors": ["youtube:search", "youtube", "youtube:search_url", "youtube:playlist", "youtube:tab"],
         "lazy_extract": True,
         "cachedir": False,
     })

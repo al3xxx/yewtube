@@ -16,15 +16,17 @@ def prune():
     # prune time expired items
 
     now = time.time()
-    oldpafs = [
-        k for k in g.metadata_cache if g.metadata_cache[k] is not None and g.metadata_cache[k].expiry < now
+    old_metadata = [
+        k
+        for k in g.metadata_cache
+        if g.metadata_cache[k] is not None and g.metadata_cache[k].expiry < now
     ]
 
-    if len(oldpafs):
-        util.dbg(c.r + "%s old extractor items pruned%s", len(oldpafs), c.w)
+    if len(old_metadata):
+        util.dbg(c.r + "%s old extractor items pruned%s", len(old_metadata), c.w)
 
-    for oldpaf in oldpafs:
-        g.metadata_cache.pop(oldpaf, 0)
+    for old_entry in old_metadata:
+        g.metadata_cache.pop(old_entry, 0)
 
     oldstreams = [
         k
@@ -38,7 +40,12 @@ def prune():
     for oldstream in oldstreams:
         g.streams.pop(oldstream, 0)
 
-    util.dbg(c.b + "paf: %s, streams: %s%s", len(g.metadata_cache), len(g.streams), c.w)
+    util.dbg(
+        c.b + "metadata: %s, streams: %s%s",
+        len(g.metadata_cache),
+        len(g.streams),
+        c.w,
+    )
 
 
 def get(vid, force=False, callback=None, threeD=False):
@@ -192,11 +199,13 @@ def get_size(ytid, url, preloading=False):
 
 
 def _get_content_length(url, preloading=False):
-    """Return content length of a url."""
+    """Return content length of a url using HEAD request."""
     prefix = "preload: " if preloading else ""
     util.dbg(c.y + prefix + "getting content-length header" + c.w)
     try:
-        with urlopen(url, timeout=5) as response:
+        from urllib.request import Request
+        req = Request(url, method="HEAD")
+        with urlopen(req, timeout=10) as response:
             return int(response.headers.get("content-length", -1))
     except Exception as e:
         util.dbg("%sfailed to get content-length: %s", prefix, e)

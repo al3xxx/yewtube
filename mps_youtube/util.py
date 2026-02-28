@@ -667,27 +667,20 @@ class CommandCompleter(Completer):
 
 
 def parse_video_length(duration):
-    """
-    Converts HH:MM:SS or seconds (int/float) to a single integer .i.e. total number of seconds
-    """
+    """Converts duration (string HH:MM:SS or integer seconds) to total seconds."""
+    if not duration:
+        return 10
     if isinstance(duration, (int, float)):
         return int(duration)
 
-    if duration and isinstance(duration, str):
-        duration_tokens = duration.split(":")
-        if len(duration_tokens) == 2:
-            return int(duration_tokens[0]) * 60 + int(duration_tokens[1])
-        elif len(duration_tokens) == 3:
-            return (
-                int(duration_tokens[0]) * 3600
-                + int(duration_tokens[1]) * 60
-                + int(duration_tokens[2])
-            )
-        try:
-            return int(duration_tokens[0])
-        except ValueError:
-            return 10
-    else:
+    tokens = str(duration).split(":")
+    try:
+        if len(tokens) == 1:
+            return int(tokens[0])
+        if len(tokens) == 2:
+            return int(tokens[0]) * 60 + int(tokens[1])
+        return int(tokens[0]) * 3600 + int(tokens[1]) * 60 + int(tokens[2])
+    except (ValueError, IndexError):
         return 10
 
 

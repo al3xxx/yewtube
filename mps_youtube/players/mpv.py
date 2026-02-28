@@ -144,6 +144,7 @@ class mpv(CmdPlayer):
                 shell=False,
                 stdin=sys.stdin,
                 stderr=subprocess.PIPE,
+                stdout=subprocess.PIPE,
                 bufsize=0,
             )
 
@@ -167,6 +168,7 @@ class mpv(CmdPlayer):
                 shell=False,
                 stdin=sys.stdin,
                 stderr=subprocess.PIPE,
+                stdout=subprocess.PIPE,
                 bufsize=0,
             )
 

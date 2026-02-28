@@ -55,7 +55,8 @@ def handle_command_exception(e):
     elif isinstance(e, (ValueError, IOError)):
         g.message = util.F("cant get track") % str(e)
     else:
-        g.message = util.F("no data") % str(e)
+        template = util.F("no data")
+        g.message = template % str(e) if "%s" in template else f"{template}: {e}"
         if not g.debug_mode:
             logging.debug(traceback_py.format_exc())
 

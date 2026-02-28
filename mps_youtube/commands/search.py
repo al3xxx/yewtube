@@ -28,26 +28,14 @@ DAYS = dict(day=1, week=7, month=30, year=365)
 
 
 def _display_search_results(progtext, wdata, msg=None, failmsg=None):
-    """Perform memoized url fetch, display progtext."""
-
+    """Display search results using pre-fetched wdata."""
     loadmsg = "Searching for '%s%s%s'" % (c.y, progtext, c.w)
-
-    def iter_songs():
-        wdata2 = wdata
-        while True:
-            for song in get_tracks_from_json(wdata2):
-                yield song
-
-            if type(wdata2) is list or not wdata2.get("nextPageToken"):
-                break
-            wdata2 = None  # extractor.call_gdata('search', qs)
-
-    # The youtube search api returns a maximum of 500 results
-    length = len(wdata)
-    slicer = util.IterSlicer(iter_songs(), length)
-
+    
+    songs = get_tracks_from_json(wdata)
+    length = len(songs)
+    
     paginatesongs(
-        slicer, length=length, msg=msg, failmsg=failmsg, loadmsg=loadmsg
+        songs, length=length, msg=msg, failmsg=failmsg, loadmsg=loadmsg
     )
 
 
@@ -147,7 +135,7 @@ def channelfromname(user):
     return None
 
 
-@command(r"channels\s+(.+)")
+@command(r"channels?\s+(.+)", "channels", "channel")
 def channelsearch(q_user):
 
     # qs = {'part': 'id,snippet',
@@ -215,7 +203,7 @@ def usersearch_id(user, channel_id, term):
     else:
         msg = "Video uploads by {2}{4}{0}"
         progtext = termuser[1]
-        if config.SEARCH_MUSIC:
+        if config.SEARCH_MUSIC.get:
             failmsg = """User %s not found or has no videos in the Music category.
 Use 'set search_music False' to show results not in the Music category.""" % termuser[
                 1
