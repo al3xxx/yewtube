@@ -27,6 +27,10 @@ mswin = os.name == "nt"
 not_utf8_environment = mswin or (
     "UTF-8" not in sys.stdout.encoding if sys.stdout.encoding else False
 )
+BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+)
 
 XYTuple = collections.namedtuple("XYTuple", "width height max_results")
 
@@ -67,6 +71,8 @@ class IterSlicer:
         return self.length
 
 
+_exefile_cache = {}
+
 def has_exefile(filename):
     """Check whether file exists in path and is executable.
 
@@ -75,6 +81,9 @@ def has_exefile(filename):
     :returns: Path to file or False if not found
     :rtype: str or False
     """
+    if filename in _exefile_cache:
+        return _exefile_cache[filename]
+
     paths = [os.getcwd()] + os.environ.get("PATH", "").split(os.pathsep)
     paths = [i for i in paths if i]
     dbg("searching path for %s", filename)
@@ -85,15 +94,33 @@ def has_exefile(filename):
         if os.path.isfile(exepath):
             if os.access(exepath, os.X_OK):
                 dbg("found at %s", exepath)
+                _exefile_cache[filename] = exepath
                 return exepath
 
+    _exefile_cache[filename] = False
     return False
 
 
 def dbg(*args):
     """Emit a debug message."""
-    # Uses xenc to deal with UnicodeEncodeError when writing to terminal
-    logging.debug(*(xenc(i) for i in args))
+    if not args:
+        return
+
+    # If multiple arguments, check if first is a format string
+    if len(args) > 1:
+        if isinstance(args[0], str) and "%" in args[0]:
+            try:
+                # Use logging's internal formatting
+                logging.debug(xenc(args[0]), *(xenc(i) for i in args[1:]))
+                return
+            except (TypeError, ValueError):
+                # Fallback if formatting fails
+                pass
+
+        # Otherwise join with spaces
+        logging.debug(" ".join(str(xenc(i)) for i in args))
+    else:
+        logging.debug(xenc(args[0]))
 
 
 def utf8_replace(txt):
@@ -119,6 +146,19 @@ def xenc(stuff):
 def xprint(stuff, end=None):
     """Compatible print."""
     print(xenc(stuff), end=end)
+
+
+def web_headers(extra=None):
+    """Return browser-like HTTP headers for outbound web requests."""
+    headers = {
+        "User-Agent": BROWSER_USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Connection": "keep-alive",
+    }
+    if extra:
+        headers.update(extra)
+    return headers
 
 
 def mswinfn(filename):
@@ -196,9 +236,6 @@ def F(key, nb=0, na=0, textlib=None):
     return "\n" * nb + text + c.w + "\n" * na
 
 
-from . import extractor
-
-
 def get_metadata(item, force=False, callback=None):
     """
     Get metadata (VideoInfo) object for an item.
@@ -210,8 +247,8 @@ def get_metadata(item, force=False, callback=None):
     :param callback: callback (legacy, for compatibility)
     :rtype: VideoInfo
     """
-    # Import here to avoid circular dependency
-    from .playlist import Video
+    # Import here to avoid circular dependency.
+    from . import extractor
 
     if isinstance(item, Video):
         ytid = item.ytid
@@ -446,11 +483,19 @@ def is_known_player(player):
 
 
 def load_player_info(player):
+    """Load player version and options into globals."""
     if "mpv" in player:
-        g.mpv_version = _get_mpv_version(player)
-        g.mpv_options = subprocess.check_output(
-            [player, "--list-options"]
-        ).decode()
+        if not g.mpv_version or g.mpv_version == (0, 0, 0):
+            g.mpv_version = _get_mpv_version(player)
+
+        if not g.mpv_options:
+            try:
+                g.mpv_options = subprocess.check_output(
+                    [player, "--list-options"], timeout=5
+                ).decode()
+            except (subprocess.SubprocessError, subprocess.TimeoutExpired):
+                g.mpv_options = ""
+                dbg(c.r + "Failed to get mpv options (timeout or error)" + c.w)
 
         if not mswin:
             if "--input-unix-socket" in g.mpv_options:
@@ -490,7 +535,7 @@ def _get_mpv_version(exename):
     re_ver = re.compile(r"mpv (\d+)\.(\d+)\.(\d+)")
 
     for line in o.split("\n"):
-        m = re_ver.match(line)
+        m = re_ver.search(line)
 
         if m:
             v = tuple(map(int, m.groups()))
@@ -560,7 +605,8 @@ def _get_metadata_from_lastfm(artist, track):
     url += "&format=json"
 
     try:
-        resp = urllib.request.urlopen(url)
+        req = urllib.request.Request(url, headers=web_headers())
+        resp = urllib.request.urlopen(req)
         metadata = dict()
         # Prior to Python 3.6, json.loads cannot take a bytes object
         data = json.loads(resp.read().decode("utf-8"))

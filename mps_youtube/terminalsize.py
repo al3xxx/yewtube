@@ -4,7 +4,6 @@
 
 import os
 import sys
-import shlex
 import shutil
 import struct
 import platform
@@ -83,8 +82,17 @@ def _get_terminal_size_tput():
     # src: http://stackoverflow.com/questions/263890/
     # how-do-i-find-the-width-height-of-a-terminal-window
     try:
-        cols = int(subprocess.check_call(shlex.split("tput cols")))
-        rows = int(subprocess.check_call(shlex.split("tput lines")))
+        with open(os.devnull, "w") as devnull:
+            cols = int(
+                subprocess.check_output(
+                    ["tput", "cols"], stderr=devnull, text=True
+                ).strip()
+            )
+            rows = int(
+                subprocess.check_output(
+                    ["tput", "lines"], stderr=devnull, text=True
+                ).strip()
+            )
         return (cols, rows)
     except Exception:
         pass

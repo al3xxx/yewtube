@@ -20,9 +20,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 """
 
+import argparse
 import locale
 import logging
-import os
 import sys
 import traceback as traceback_py
 import click
@@ -36,8 +36,6 @@ from . import config
 has_readline = (
     True  # We use prompt_toolkit now, which provides equivalent features
 )
-
-mswin = os.name == "nt"
 
 try:
     locale.setlocale(locale.LC_ALL, "")  # for date formatting
@@ -98,49 +96,66 @@ def prompt_for_exit(history=None, completer=None):
 
 @click.command(
     context_settings=dict(
-        help_option_names=["-h", "--help"], ignore_unknown_options=True
+        help_option_names=["-h", "--help"],
+        ignore_unknown_options=True,
+        allow_extra_args=True,
+        allow_interspersed_args=False,
     )
 )
 @click.version_option(version=__version__)
+@click.pass_context
 @click.option("--debug", "-d", is_flag=True, help="Enable debug mode")
-@click.option(
-    "--logging", "-l", "enable_logging", is_flag=True, help="Enable logging"
-)
+@click.option("--logging", "-l", "enable_logging", is_flag=True, help="Enable logging")
 @click.option("--no-autosize", is_flag=True, help="Disable terminal autosizing")
 @click.option("--no-preload", is_flag=True, help="Disable preloading of tracks")
 @click.option("--no-textart", is_flag=True, help="Disable ASCII art")
+@click.option(
+    "--cookies",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Path to a Netscape-format cookies file for authenticated requests",
+)
+@click.option(
+    "--cookies-from-browser",
+    help="Load cookies from browser (for example: chrome, firefox, edge)",
+)
+@click.option(
+    "--visitor-data",
+    help="YouTube visitor data token for authenticated extraction without cookies",
+)
 @click.argument("commands_args", nargs=-1, type=click.UNPROCESSED)
 def main(
-    debug, enable_logging, no_autosize, no_preload, no_textart, commands_args
+    ctx,
+    debug,
+    enable_logging,
+    no_autosize,
+    no_preload,
+    no_textart,
+    cookies,
+    cookies_from_browser,
+    visitor_data,
+    commands_args,
 ):
     """yewtube - Terminal based YouTube player and downloader."""
-
-    # Setup global flags based on click options
-    if debug or os.environ.get("mpsytdebug") == "1":
-        g.debug_mode = True
-        g.no_clear_screen = True
-
-    if no_autosize:
-        g.detectable_size = False
-
-    if no_preload:
-        g.preload_disabled = True
-
-    if no_textart:
-        g.no_textart = True
-
-    g.argument_commands = list(commands_args)
-    g.command_line = (
-        "playurl" in g.argument_commands or "dlurl" in g.argument_commands
+    passthrough_args = list(commands_args) + list(ctx.args)
+    cli_args = argparse.Namespace(
+        commands=passthrough_args,
+        help=False,
+        version=False,
+        debug=debug,
+        logging=enable_logging,
+        no_autosize=no_autosize,
+        no_preload=no_preload,
+        no_textart=no_textart,
+        cookies=cookies,
+        cookies_from_browser=cookies_from_browser,
+        visitor_data=visitor_data,
     )
-    if g.command_line:
-        g.no_clear_screen = True
 
     # Initialize
     try:
-        init.init()
+        init.init(cli_args=cli_args)
     except Exception as e:
-        click.echo(f"Initialization failed: {e}", err=True)
+        print(f"Initialization failed: {e}", file=sys.stderr)
         if g.debug_mode:
             traceback_py.print_exc()
         return sys.exit(1)

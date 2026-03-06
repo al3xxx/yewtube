@@ -1,5 +1,4 @@
 import base64
-import json
 import logging
 import math
 import re
@@ -30,10 +29,10 @@ DAYS = dict(day=1, week=7, month=30, year=365)
 def _display_search_results(progtext, wdata, msg=None, failmsg=None):
     """Display search results using pre-fetched wdata."""
     loadmsg = "Searching for '%s%s%s'" % (c.y, progtext, c.w)
-    
+
     songs = get_tracks_from_json(wdata)
     length = len(songs)
-    
+
     paginatesongs(
         songs, length=length, msg=msg, failmsg=failmsg, loadmsg=loadmsg
     )
@@ -424,12 +423,12 @@ def get_tracks_from_json(jsons):
             ytid = get_track_id_from_json(item)
             if not ytid:
                 continue
-                
+
             duration = util.parse_video_length(item.get("duration"))
             title = item.get("title", "Unknown Title").strip()
             # instantiate video representation in local model
             cursong = Video(ytid=ytid, title=title, length=duration)
-            
+
             # Default metadata values
             likes = 0
             dislikes = 0
@@ -440,11 +439,11 @@ def get_tracks_from_json(jsons):
                 or item.get("publishedTimeText")
                 or "?"
             )
-            
+
             channel_data = item.get("channel", {})
             uploader_id = channel_data.get("id", "?")
-            uploader_name = channel_data.get("name", "?")
-            
+            uploader_name = channel_data.get("name") or channel_data.get("title") or "?"
+
             view_count_data = item.get("viewCount", {})
             if isinstance(view_count_data, dict):
                 view_count = view_count_data.get("text", "?")
@@ -593,9 +592,13 @@ def yt_url(url: str, print_title: bool = False):
             return
 
         g.browse_mode = "normal"
-        v = Video(p["id"], p["title"], int(p["duration"]["secondsText"]))
-        if p and isinstance(p, dict):
-            v_title = p.get("title")
+        duration = p.get("duration", 0)
+        if isinstance(duration, str):
+            duration = util.parse_video_length(duration)
+        duration = int(duration or 0)
+
+        v = Video(p["id"], p["title"], duration)
+        v_title = p.get("title")
         g.model.songs.append(v)
         v_ids.add(v_id)
 

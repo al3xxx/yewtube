@@ -1,3 +1,21 @@
+[project]
+name = "yewtube"
+version = "2.12.0"
+description = "Terminal based YouTube player and downloader"
+dependencies = [
+    "click>=8.1.7",
+    "prompt-toolkit>=3.0.43",
+    "pylast>=5.2.0",
+    "pyperclip>=1.8.2",
+    "httpx>=0.26.0",
+    "anyio>=4.2.0",
+    "yt-dlp>=2026.3.3",
+]
+requires-python = ">=3.10"
+
+[project.scripts]
+yt = "mps_youtube.main:main"
+
 [tool.ruff]
 # Same as Black.
 line-length = 80
@@ -17,3 +35,12 @@ unfixable = []
 "mps_youtube/listview/__init__.py" = ["F401"]
 "mps_youtube/players/__init__.py" = ["F401"]
 "mps_youtube/__init__.py" = ["F401"]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.4",
+]

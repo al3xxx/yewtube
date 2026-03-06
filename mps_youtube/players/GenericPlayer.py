@@ -1,9 +1,12 @@
 import os
+import shlex
 import subprocess
 
 from .. import config
 
 from ..player import CmdPlayer
+
+mswin = os.name == "nt"
 
 #
 # This class can be used as a templete for new players
@@ -20,7 +23,7 @@ class GenericPlayer(CmdPlayer):
 
     def _generate_real_playerargs(self):
         """Generates player arguments to called using Popen"""
-        args = config.PLAYERARGS.get.strip().split()
+        args = shlex.split(config.PLAYERARGS.get.strip(), posix=not mswin)
 
         ############################################
         # Define your arguments below this line

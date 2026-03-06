@@ -59,7 +59,7 @@ class ContentQuery:
         #     ) if self.nextpagetoken else self.query
 
         # Run query
-        util.dbg("CQ.query", self.query)
+        util.dbg("CQ.query: %s", self.query)
         data = extractor.channel_search(self.query)  # extractor.call_gdata(self.api, qry)
 
         self.maxresults = len(

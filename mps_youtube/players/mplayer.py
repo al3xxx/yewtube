@@ -1,5 +1,6 @@
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -34,7 +35,7 @@ class mplayer(CmdPlayer):
                     % self.song.title
                 )
 
-        args = config.PLAYERARGS.get.strip().split()
+        args = shlex.split(config.PLAYERARGS.get.strip(), posix=not mswin)
 
         pd = g.playerargs_defaults["mplayer"]
         args.extend((pd["title"], '"{0}"'.format(self.song.title)))
@@ -117,7 +118,7 @@ class mplayer(CmdPlayer):
         )
         self._player_status(self.songdata + "; ", self.song.length)
         returncode = self.p.wait()
-        print(returncode)
+        util.dbg("mplayer exited with code %s", returncode)
 
         if returncode == 42:
             self.previous()

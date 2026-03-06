@@ -87,6 +87,45 @@ This document tracks the significant refactoring and modernizations applied to t
 - **Safe Network Handling**: Added timeouts and comprehensive error handling to all network-bound operations (e.g., content-length retrieval and search suggestions).
 - **Resolution Resilience**: Hardened the stream selection logic to handle non-standard or malformed resolution strings (e.g., "720p" vs "1280x720") common in `yt-dlp` results.
 - **Initialization Integrity**: Improved the main entry point to ensure the application stops immediately on initialization failures, preventing cascaded state errors.
+- **Pydantic Configuration**: Migrated the legacy custom configuration system to Pydantic `BaseSettings`. This provides robust type validation, environment variable support, and modern JSON serialization while maintaining full backward compatibility with the existing interactive CLI through a bridge layer.
 
----
-*Last updated: February 26, 2026*
+## 12. Recent Stabilization Updates (Completed)
+- **Argparse Unification**: Standardized CLI parsing on `argparse` end-to-end, removing the mixed parser state that previously caused runtime namespace mismatches.
+- **CLI Cookie Support**: Added first-class authentication switches:
+    - `--cookies <path>` for Netscape-format cookie files.
+    - `--cookies-from-browser <browser[:profile]>` for direct browser cookie loading.
+- **Cookie Source Hardening**: Removed cookie loading from environment variables and switched to explicit CLI-driven configuration (with `~/.config/mps-youtube/cookies.txt` fallback support retained in extractor logic).
+- **Browser-like Request Headers**: Added a shared browser User-Agent/header profile and applied it consistently to `yt-dlp` and direct HTTP requests to reduce anti-bot false positives.
+- **Search Error Noise Reduction**: Suppressed the specific YouTube bot-check warning when search results are still successfully returned, while preserving errors for empty/failed searches.
+- **Runtime Regression Fixes**:
+    - Restored `g.text` binding to fix `module 'mps_youtube.g' has no attribute 'text'`.
+    - Hardened CLI argument access in initialization to avoid missing-attribute crashes.
+    - Replaced stray runtime `print()` calls with debug logging in playback/config paths.
+- **Lint & Consistency Pass**: Ran a project-wide `ruff --fix` cleanup and resolved remaining manual lint issues.
+
+## 13. Internal Innertube Engine (Completed)
+- **Eliminated External Dependency**: Removed `youtube-search-python` from the project to reduce external dependencies and improve stability. 
+- **Lightweight Internal Client**: Implemented a custom `Innertube` client in `mps_youtube/innertube.py` that mimics the behavior of the removed library by directly interfacing with YouTube's internal API.
+- **Handshake & Session Management**: Added an automated handshake mechanism to retrieve `visitorData` and session cookies, helping to maintain a consistent session identity.
+- **Robust Parsing & Fallback**:
+    - Developed custom parsers for `videoRenderer`, `playlistRenderer`, and full `browse` responses.
+    - Seamlessly integrated the internal engine with the existing `yt-dlp` fallback mechanism, ensuring search and retrieval continuity even in restricted environments.
+
+## 14. Playback and extraction reliability updates (Completed)
+- **Queue continuation fix**: Restored playlist resilience so a failed stream
+  no longer aborts the entire queue. Playback now advances to the next track
+  only when `AUTOPLAY` is enabled.
+- **mpv stderr parser fix**: Repaired non-IPC status parsing by restoring
+  per-character buffering and newline-triggered line processing. This fixes
+  runtime progress, volume, and pause-state updates.
+- **StreamURLFetcher integration**:
+    - Added `mps_youtube/streamurlfetcher.py` to resolve stream URLs from
+      Innertube player responses.
+    - Integrated the fetcher into `extractor.get_video_streams` as a no-cookie
+      path before full `yt-dlp` extraction.
+- **Backported cipher helpers**: Added `_decrypt_signature`,
+  `_decrypt_nsig`, and `signatureCipher`/`n` URL reconstruction helpers in
+  `mps_youtube/innertube.py` for compatibility with modern player response
+  formats.
+- **Cleanup**: Removed temporary benchmark scripting artifacts from the
+  repository after integration and regression fixes were completed.

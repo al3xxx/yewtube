@@ -82,6 +82,14 @@ class BasePlayer:
                     override=self.override,
                     softrepeat=self.softrepeat,
                 )
+
+                if self.stream is None:
+                    util.dbg("Failed to get stream details, skipping playback.")
+                    if config.AUTOPLAY.get:
+                        self.song_no += 1
+                        continue
+                    return
+
                 self._playsong()
 
             except KeyboardInterrupt:
@@ -142,7 +150,8 @@ class BasePlayer:
             )
 
         size = streams.get_size(self.song.ytid, self.stream["url"])
-        self.songdata = "%s" % (self.song.title[:20])
+        mbsize = str(int(size / (1024**2))) if size > 0 else "?"
+        self.songdata = f"{self.stream['ext']}:{mbsize}MB"
         screen.writestatus(self.songdata)
 
         self._launch_player()
@@ -229,8 +238,8 @@ class BasePlayer:
         return out
 
     def make_status_line(self, elapsed_s, prefix, songlength=0, volume=None):
-        # Display static track name without ID or separator
-        new_prefix = "%s " % (self.song.title[:20])
+        # Display file format and size
+        new_prefix = "%s " % (self.songdata)
 
         self._line = self._make_status_line(
             elapsed_s, new_prefix, songlength, volume=volume
@@ -427,7 +436,20 @@ def stream_details(song, failcount=0, override=False, softrepeat=False):
             )
 
         if not stream:
-            raise IOError("No streams available")
+            # Last-resort fallback: use the first stream-like entry if present.
+            slist = cached["meta"] if isinstance(cached, dict) else cached
+            stream = next((x for x in slist if x.get("url")), None)
+            if stream:
+                util.dbg(
+                    "%sno preferred stream found; using fallback stream%s",
+                    c.y,
+                    c.w,
+                )
+                video = stream.get("mtype") != "audio"
+                if not video:
+                    override = "audio"
+            else:
+                raise IOError("No streams available")
 
         return (video, stream, override)
 
@@ -446,7 +468,7 @@ def stream_details(song, failcount=0, override=False, softrepeat=False):
             )
         else:
             g.message = str(e)
-            return
+            return (None, None, None)
 
     except IOError as e:
         # this may be cause by attempting to play a https stream with
@@ -454,4 +476,4 @@ def stream_details(song, failcount=0, override=False, softrepeat=False):
         # ====
         errmsg = e.message if hasattr(e, "message") else str(e)
         g.message = c.r + str(errmsg) + c.w
-        return
+        return (None, None, None)

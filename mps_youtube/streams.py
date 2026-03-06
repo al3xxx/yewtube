@@ -75,7 +75,7 @@ def get(vid, force=False, callback=None, threeD=False):
         # Determine stream type (audio, video, or both)
         vcodec = s.get("vcodec", "none")
         acodec = s.get("acodec", "none")
-        
+
         if vcodec == "none" and acodec != "none":
             mtype = "audio"
         elif vcodec != "none" and acodec != "none":
@@ -204,7 +204,7 @@ def _get_content_length(url, preloading=False):
     util.dbg(c.y + prefix + "getting content-length header" + c.w)
     try:
         from urllib.request import Request
-        req = Request(url, method="HEAD")
+        req = Request(url, headers=util.web_headers(), method="HEAD")
         with urlopen(req, timeout=10) as response:
             return int(response.headers.get("content-length", -1))
     except Exception as e:

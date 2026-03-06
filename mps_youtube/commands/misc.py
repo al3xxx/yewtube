@@ -242,10 +242,10 @@ def video_info(num):
             g.message = "Fetching playlist info.."
             screen.update()
             util.dbg("%sFetching playlist using extractor%s", c.y, c.w)
-            ytpl = extractor.get_playlist2(p["link"])
+            ytpl = extractor.get_playlist(p["link"])
             g.playlist_cache[p["link"]] = (ytpl, util.IterSlicer(ytpl))
 
-        ytpl_desc = ytpl.description
+        ytpl_desc = p.get("description", "")
         g.content = generate_songlist_display()
         created = util.yt_datetime_local(p["created"])
         updated = util.yt_datetime_local(p["updated"])
@@ -275,32 +275,32 @@ def video_info(num):
         out += "\n\nDescription:\n\n" + str(p.get("description", "")) + "\n"
         out += "\nKeywords: " + str(p.get("keywords", [])) + "\n"
         out += "\nIs Live Now    : " + str(p.get("isLiveNow", False))
-        
+
         duration_text = "0"
         duration_data = p.get("duration")
         if isinstance(duration_data, dict):
             duration_text = duration_data.get("secondsText", "0")
         elif isinstance(duration_data, str):
             duration_text = str(util.parse_video_length(duration_data))
-            
+
         out += "\nDuration       : " + str(
             timedelta(seconds=int(duration_text))
         )
-        
+
         view_count = "0"
         view_data = p.get("viewCount")
         if isinstance(view_data, dict):
             view_count = view_data.get("text", "0").replace(",", "")
         elif isinstance(view_data, str):
             view_count = view_data.replace(",", "")
-            
+
         out += "\nView count     : " + "{:,}".format(int(re.sub(r"\D", "", view_count) or 0))
-        
+
         author_name = p.author
         channel_data = p.get("channel", {})
         channel_link = channel_data.get("link", "") if isinstance(channel_data, dict) else ""
         out += "\nAuthor         : " + str(author_name + " ~ " + channel_link)
-        
+
         out += "\nPublished Date : " + str(p.get("publishDate", "?"))
         out += "\nUploaded Date  : " + str(p.get("uploadDate", "?"))
         out += "\nRating         : " + str(p.rating)
@@ -308,10 +308,10 @@ def video_info(num):
         out += "\nDislikes       : " + "{:,}".format(p.dislikes)
         out += "\nCategory       : " + str(p.get("category", "?"))
         out += "\nFamily Safe    : " + str(p.get("isFamilySafe", "?"))
-        out += "\nLink           : " + str(p.get("link", "https://youtube.com/watch?v=" + p.ytid))
+        out += "\nLink           : " + str(p.get("link", "https://youtube.com/watch?v=" + str(p.ytid)))
         if config.SHOW_QRCODE.get:
             out += "\n" + qrcode_display(
-                "https://youtube.com/watch?v=%s" % p.ytid
+                "https://youtube.com/watch?v=%s" % str(p.ytid)
             )
 
         out += "\n\n%s[%sPress enter to go back%s]%s" % (c.y, c.w, c.y, c.w)
@@ -327,9 +327,7 @@ def stream_info(num):
         screen.writestatus("Fetching stream metadata..")
         item = g.model[int(num) - 1]
         streams.get(item)
-        p = util.get_metadata(item)
-        setattr(p, "ytid", p.ytid)
-        details = player.stream_details(p)[1]
+        details = player.stream_details(item)[1]
         screen.writestatus("Fetched")
         out = "\n\n" + c.ul + "Stream Info" + c.w + "\n"
         out += "\nExtension   : " + details["ext"]

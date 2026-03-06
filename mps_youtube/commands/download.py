@@ -5,7 +5,7 @@ import time
 import shlex
 import random
 import subprocess
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
 from .. import g, c, screen, streams, content, config, util, extractor
@@ -382,7 +382,8 @@ def _download(song, filename, url=None, audio=False, allow_transcode=True):
         "[{0}{4:4.0f} kbps{2}].  ETA: [{0}{5:.0f} secs{2}]"
     )
 
-    resp = urlopen(url)
+    req = Request(url, headers=util.web_headers())
+    resp = urlopen(req)
     total = int(resp.info()["Content-Length"].strip())
     chunksize, bytesdone, t0 = 16384, 0, time.time()
     with open(filename, "wb") as outfh:

@@ -1,4 +1,3 @@
-import random
 import sys
 import typing as T
 import webbrowser
@@ -6,7 +5,7 @@ from urllib.error import HTTPError, URLError
 
 from .. import c, config, content, g, streams, util
 from . import RS, WORD, command
-from .search import related, yt_url
+from .search import yt_url
 from .songlist import plist
 
 

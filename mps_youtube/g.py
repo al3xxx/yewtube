@@ -4,7 +4,8 @@ import collections
 import os
 import sys
 
-from . import c, paths
+from . import paths
+from .i18n import text as _text
 from .playlist import Playlist
 
 volume = None
@@ -95,5 +96,7 @@ playerargs_defaults = {
 }
 argument_commands = []
 commands = []
-
-from .i18n import text
+text = _text
+cookies_file = None
+cookies_from_browser = None
+visitor_data = None

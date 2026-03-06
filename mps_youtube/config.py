@@ -16,6 +16,16 @@ from . import g, c, paths, util
 
 
 mswin = os.name == "nt"
+macos = sys.platform == "darwin"
+
+
+def _default_aux_mpv_cli_config():
+    """Return mpv audio output defaults appropriate for each platform."""
+    if mswin:
+        return "--ao=wasapi"
+    if macos:
+        return "--ao=coreaudio"
+    return "--ao=pulse,alsa,pipewire"
 
 
 class ConfigItem:
@@ -277,7 +287,7 @@ def check_encoder(option):
 def check_player(player):
     """Check player exefile exists and get mpv version."""
     if util.has_exefile(player):
-        print(player)
+        util.dbg("resolved player executable: %s", player)
         util.assign_player(player)
         if "mpv" in player:
             version = "%s.%s.%s" % g.mpv_version
@@ -378,7 +388,7 @@ class _Config:
         ConfigItem("input_history", True),
         ConfigItem("vlc_dummy_interface", False),
         ConfigItem("show_subtitles", True),
-        ConfigItem("aux_mpv_cli_config", "--ao=pulse,alsa"),
+        ConfigItem("aux_mpv_cli_config", _default_aux_mpv_cli_config()),
     ]
 
     def __getitem__(self, key):

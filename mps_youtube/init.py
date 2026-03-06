@@ -23,10 +23,10 @@ from .util import assign_player, dbg, has_exefile, load_player_info, xprint
 mswin = os.name == "nt"
 
 
-def init():
+def init(cli_args=None):
     """Initial setup."""
 
-    _process_cl_args()
+    _process_cl_args(cli_args=cli_args)
 
     # set player to mpv or mplayer if found, otherwise unset
     suffix = ".exe" if mswin else ""
@@ -49,6 +49,11 @@ def init():
 
     else:
         config.load()
+
+        # check mpv/mplayer version early to cache for assign_player
+        if has_exefile(config.PLAYER.get):
+            load_player_info(config.PLAYER.get)
+
         try:
             assign_player(
                 config.PLAYER.get
@@ -71,10 +76,6 @@ def init():
     # ensure encoder is not set beyond range of available presets
     if config.ENCODER.get >= len(g.encoders):
         config.ENCODER.set("0")
-
-    # check mpv/mplayer version
-    if has_exefile(config.PLAYER.get):
-        load_player_info(config.PLAYER.get)
 
     # setup colorama
     if has_colorama and mswin:
@@ -208,60 +209,78 @@ def _init_readline():
     dbg(c.g + "Set history file path to: " + g.READLINE_FILE + c.w)
 
 
-def _process_cl_args():
+def _process_cl_args(cli_args=None):
     """Process command line arguments."""
 
-    parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("commands", nargs="*")
-    parser.add_argument("--help", "-h", action="store_true")
-    parser.add_argument("--version", "-v", action="store_true")
-    parser.add_argument("--debug", "-d", action="store_true")
-    parser.add_argument("--logging", "-l", action="store_true")
-    parser.add_argument("--no-autosize", action="store_true")
-    parser.add_argument("--no-preload", action="store_true")
-    parser.add_argument("--no-textart", action="store_true")
-    args = parser.parse_args()
+    if cli_args is None:
+        parser = argparse.ArgumentParser(add_help=False)
+        parser.add_argument("commands", nargs="*")
+        parser.add_argument("--help", "-h", action="store_true")
+        parser.add_argument("--version", "-v", action="store_true")
+        parser.add_argument("--debug", "-d", action="store_true")
+        parser.add_argument("--logging", "-l", action="store_true")
+        parser.add_argument("--no-autosize", action="store_true")
+        parser.add_argument("--no-preload", action="store_true")
+        parser.add_argument("--no-textart", action="store_true")
+        parser.add_argument("--cookies")
+        parser.add_argument("--cookies-from-browser")
+        parser.add_argument("--visitor-data")
+        args = parser.parse_args()
+    else:
+        args = cli_args
 
-    if args.version:
+    if getattr(args, "version", False):
         screen.msgexit(_get_version_info())
 
-    elif args.help:
+    elif getattr(args, "help", False):
         screen.msgexit("\n".join(i[2] for i in helptext()))
 
-    if args.debug or os.environ.get("mpsytdebug") == "1":
+    if getattr(args, "debug", False) or os.environ.get("mpsytdebug") == "1":
         xprint(_get_version_info())
         g.debug_mode = True
         g.no_clear_screen = True
 
-    if args.logging or os.environ.get("mpsytlog") == "1" or g.debug_mode:
+    if getattr(args, "logging", False) or os.environ.get("mpsytlog") == "1" or g.debug_mode:
         logfile = os.path.join(tempfile.gettempdir(), "mpsyt.log")
         logging.basicConfig(level=logging.DEBUG, filename=logfile)
         logging.getLogger("extractor").setLevel(logging.DEBUG)
 
-    if args.no_autosize:
+    if getattr(args, "no_autosize", False):
         g.detectable_size = False
 
     g.command_line = "playurl" in args.commands or "dlurl" in args.commands
     if g.command_line:
         g.no_clear_screen = True
 
-    if args.no_preload:
+    if getattr(args, "no_preload", False):
         g.preload_disabled = True
 
-    if args.no_textart:
+    if getattr(args, "no_textart", False):
         g.no_textart = True
+
+    # Resolve cookies source
+    g.cookies_file = getattr(args, "cookies", None) or os.environ.get("COOKIES")
+    if g.cookies_file:
+        g.cookies_file = os.path.expanduser(g.cookies_file)
+
+    g.cookies_from_browser = getattr(args, "cookies_from_browser", None)
+    if g.cookies_file and g.cookies_from_browser:
+        dbg("Both --cookies and --cookies-from-browser were set; using --cookies")
+        g.cookies_from_browser = None
+
+    g.visitor_data = getattr(args, "visitor_data", None)
+    if g.visitor_data and (g.cookies_file or g.cookies_from_browser):
+        dbg(
+            "--visitor-data was set; disabling cookie-based auth to use visitor-data flow"
+        )
+        g.cookies_file = None
+        g.cookies_from_browser = None
 
     g.argument_commands = args.commands
 
 
 def _get_version_info():
     """Return version and platform info."""
-    # extractor_version = extractor.__version__
-    # youtube_dl_version = None
-    # if tuple(map(int, extractor_version.split('.'))) >= (0, 5, 0):
-    #     extractor_version += " (" + extractor.backend + " backend)"
-    #     if extractor.backend == "youtube-dl":
-
     from yt_dlp.version import __version__ as ytdlp_version
 
     dbus_version = None

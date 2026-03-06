@@ -1,11 +1,20 @@
 import json
 import os
 import re
+import shlex
 import socket
 import subprocess
 import sys
 import tempfile
 import time
+import select
+
+try:
+    import termios
+    import tty
+    has_termios = True
+except ImportError:
+    has_termios = False
 
 from .. import c, config, g, paths, util
 from ..player import CmdPlayer
@@ -17,11 +26,22 @@ mswin = os.name == "nt"
 class mpv(CmdPlayer):
     def __init__(self, player):
         self.player = player
-        self.mpv_version = _get_mpv_version(player)
-        self.mpv_options = subprocess.check_output(
-            [player, "--list-options"]
-        ).decode()
-        self.error_log = []
+
+        if g.mpv_version and g.mpv_version != (0, 0, 0):
+            self.mpv_version = g.mpv_version
+        else:
+            self.mpv_version = _get_mpv_version(player)
+
+        if g.mpv_options:
+            self.mpv_options = g.mpv_options
+        else:
+            try:
+                self.mpv_options = subprocess.check_output(
+                    [player, "--list-options"], timeout=5
+                ).decode()
+            except (subprocess.SubprocessError, subprocess.TimeoutExpired):
+                self.mpv_options = ""
+                util.dbg(c.r + "Failed to get mpv options (timeout or error)" + c.w)
 
         self.mpv_usesock = ""
         if not mswin:
@@ -39,7 +59,7 @@ class mpv(CmdPlayer):
 
         """
 
-        args = config.PLAYERARGS.get.strip().split()
+        args = shlex.split(config.PLAYERARGS.get.strip(), posix=not mswin)
 
         pd = g.playerargs_defaults["mpv"]
         # Use new mpv syntax
@@ -94,7 +114,9 @@ class mpv(CmdPlayer):
             util.list_update("--loop-file", args)
 
         # Additional user-defined CLI arguments
-        for arg in config.AUX_MPV_CLI_CONFIG.get.strip().split():
+        for arg in shlex.split(
+            config.AUX_MPV_CLI_CONFIG.get.strip(), posix=not mswin
+        ):
             util.list_update(arg, args)
 
         if not config.SHOW_VIDEO.get or self.override == "a-v":
@@ -120,7 +142,6 @@ class mpv(CmdPlayer):
     def launch_player(self, cmd):
         self.input_file = _get_input_file()
         cmd.append("--input-conf=" + self.input_file)
-        cmd.append("--input-terminal=yes")
         self.conf_dir = _get_conf_dir()
         if self.conf_dir is not None:
             cmd.append("--config-dir=" + self.conf_dir)
@@ -142,9 +163,9 @@ class mpv(CmdPlayer):
             self.p = subprocess.Popen(
                 cmd,
                 shell=False,
-                stdin=sys.stdin,
+                stdin=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 bufsize=0,
             )
 
@@ -168,7 +189,7 @@ class mpv(CmdPlayer):
                 shell=False,
                 stdin=sys.stdin,
                 stderr=subprocess.PIPE,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 bufsize=0,
             )
 
@@ -241,95 +262,152 @@ class mpv(CmdPlayer):
                 s.send(json.dumps(cmd).encode() + b"\n")
                 volume_level = elapsed_s = None
 
-                for line in s.makefile():
-                    resp = json.loads(line)
+                fd = sys.stdin.fileno()
+                is_tty = os.isatty(fd)
+                old_settings = termios.tcgetattr(fd) if is_tty and has_termios else None
 
-                    # deals with bug in mpv 0.7 - 0.7.3
-                    if (
-                        resp.get("event") == "property-change"
-                        and not observe_full
-                    ):
-                        cmd = {"command": ["observe_property", 2, "volume"]}
-                        s.send(json.dumps(cmd).encode() + b"\n")
-                        observe_full = True
+                try:
+                    if old_settings:
+                        tty.setcbreak(fd)
 
-                    if (
-                        resp.get("event") == "property-change"
-                        and resp["id"] == 1
-                    ):
-                        if resp.get("data") is not None:
-                            elapsed_s = int(resp["data"])
+                    sock_file = s.makefile()
+                    while self.p.poll() is None:
+                        inputs = [s]
+                        if is_tty:
+                            inputs.append(sys.stdin)
 
-                    elif (
-                        resp.get("event") == "property-change"
-                        and resp["id"] == 2
-                    ):
-                        volume_level = int(resp["data"])
+                        r, _, _ = select.select(inputs, [], [], 0.1)
 
-                    if volume_level and volume_level != g.volume:
-                        g.volume = volume_level
-                    if elapsed_s:
-                        self.make_status_line(
-                            elapsed_s, prefix, songlength, volume=volume_level
-                        )
+                        if s in r:
+                            line = sock_file.readline()
+                            if not line:
+                                break
+                            resp = json.loads(line)
 
-            except socket.error:
-                pass
+                            if (
+                                resp.get("event") == "property-change"
+                                and not observe_full
+                            ):
+                                cmd = {"command": ["observe_property", 2, "volume"]}
+                                s.send(json.dumps(cmd).encode() + b"\n")
+                                observe_full = True
+
+                            if (
+                                resp.get("event") == "property-change"
+                                and resp["id"] == 1
+                            ):
+                                if resp.get("data") is not None:
+                                    elapsed_s = int(resp["data"])
+
+                            elif (
+                                resp.get("event") == "property-change"
+                                and resp["id"] == 2
+                            ):
+                                volume_level = int(resp["data"])
+
+                            if volume_level and volume_level != g.volume:
+                                g.volume = volume_level
+                            if elapsed_s:
+                                self.make_status_line(
+                                    elapsed_s, prefix, songlength, volume=volume_level
+                                )
+
+                        if is_tty and sys.stdin in r:
+                            key = sys.stdin.read(1)
+                            if key == '\x1b':  # Start of escape sequence
+                                # Set a short timeout to read the rest of the sequence
+                                r_esc, _, _ = select.select([sys.stdin], [], [], 0.05)
+                                if r_esc:
+                                    key += sys.stdin.read(1)
+                                    if key.endswith('['):
+                                        r_esc, _, _ = select.select([sys.stdin], [], [], 0.05)
+                                        if r_esc:
+                                            key += sys.stdin.read(1)
+
+                            if key == ' ':
+                                cmd = {"command": ["cycle", "pause"]}
+                                s.send(json.dumps(cmd).encode() + b"\n")
+                            elif key in ('q', 'Q'):
+                                self.p.terminate()
+                                break
+                            elif key == '\x1b[A':  # Up
+                                cmd = {"command": ["seek", 60]}
+                                s.send(json.dumps(cmd).encode() + b"\n")
+                            elif key == '\x1b[B':  # Down
+                                cmd = {"command": ["seek", -60]}
+                                s.send(json.dumps(cmd).encode() + b"\n")
+                            elif key == '\x1b[C':  # Right
+                                cmd = {"command": ["seek", 5]}
+                                s.send(json.dumps(cmd).encode() + b"\n")
+                            elif key == '\x1b[D':  # Left
+                                cmd = {"command": ["seek", -5]}
+                                s.send(json.dumps(cmd).encode() + b"\n")
+                            elif key in ('9', '('):
+                                cmd = {"command": ["add", "volume", -2]}
+                                s.send(json.dumps(cmd).encode() + b"\n")
+                            elif key in ('0', ')'):
+                                cmd = {"command": ["add", "volume", 2]}
+                                s.send(json.dumps(cmd).encode() + b"\n")
+
+                finally:
+                    if old_settings:
+                        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+            except (socket.error, json.JSONDecodeError) as e:
+                util.dbg("IPC communication error: %s", e)
 
         else:
             elapsed_s = 0
 
-            while self.p.poll() is None:
-                stdstream = self.p.stderr
-                char = stdstream.read(1).decode("utf-8", errors="ignore")
+            # Use a buffered reader to handle lines efficiently
+            for line_bytes in self.p.stderr:
+                line = line_bytes.decode("utf-8", errors="ignore")
+                for char in line:
+                    if char in "\r\n":
+                        mv = re_volume.search(buff)
+                        if mv:
+                            volume_level = int(mv.group("volume"))
 
-                if char in "\r\n":
-                    mv = re_volume.search(buff)
+                        match_object = re_player.match(buff)
 
-                    if mv:
-                        volume_level = int(mv.group("volume"))
-
-                    match_object = re_player.match(buff)
-
-                    if match_object:
-                        try:
-                            h, m, s = map(int, match_object.groups())
-                            elapsed_s = h * 3600 + m * 60 + s
-
-                        except ValueError:
+                        if match_object:
                             try:
-                                elapsed_s = int(
-                                    match_object.group("elapsed_s") or "0"
-                                )
+                                h, m, s = map(int, match_object.groups())
+                                elapsed_s = h * 3600 + m * 60 + s
 
                             except ValueError:
-                                continue
+                                try:
+                                    elapsed_s = int(
+                                        match_object.group("elapsed_s") or "0"
+                                    )
 
-                        if volume_level and volume_level != g.volume:
-                            g.volume = volume_level
-                        self.make_status_line(
-                            elapsed_s, prefix, songlength, volume=volume_level
-                        )
+                                except ValueError:
+                                    continue
 
+                            if volume_level and volume_level != g.volume:
+                                g.volume = volume_level
+                            self.make_status_line(
+                                elapsed_s, prefix, songlength, volume=volume_level
+                            )
+
+                        else:
+                            # Collect potentially interesting error/status lines
+                            if buff.strip() and not buff.startswith("AV:"):
+                                self.error_log.append(buff.strip())
+
+                        if buff.startswith("ANS_volume="):
+                            volume_level = round(float(buff.split("=")[1]))
+
+                        paused = ("PAUSE" in buff) or ("Paused" in buff)
+                        if (elapsed_s != last_pos or paused) and g.mprisctl:
+                            last_pos = elapsed_s
+                            g.mprisctl.send(("pause", paused))
+                            g.mprisctl.send(("volume", volume_level))
+                            g.mprisctl.send(("time-pos", elapsed_s))
+
+                        buff = ""
                     else:
-                        # Collect potentially interesting error/status lines
-                        if buff.strip() and not buff.startswith("AV:"):
-                            self.error_log.append(buff.strip())
-
-                    if buff.startswith("ANS_volume="):
-                        volume_level = round(float(buff.split("=")[1]))
-
-                    paused = ("PAUSE" in buff) or ("Paused" in buff)
-                    if (elapsed_s != last_pos or paused) and g.mprisctl:
-                        last_pos = elapsed_s
-                        g.mprisctl.send(("pause", paused))
-                        g.mprisctl.send(("volume", volume_level))
-                        g.mprisctl.send(("time-pos", elapsed_s))
-
-                    buff = ""
-
-                else:
-                    buff += char
+                        buff += char
 
     def _help(self, short=True):
         """Mplayer help."""
@@ -376,6 +454,11 @@ def _get_input_file():
     conf = conf.replace("playlist_next", "quit")
     conf = conf.replace("pt_step 1", "quit")
     standard_cmds = [
+        "SPACE cycle pause\n",
+        "RIGHT seek 5\n",
+        "LEFT seek -5\n",
+        "UP seek 60\n",
+        "DOWN seek -60\n",
         "q quit 43\n",
         "p quit 42\n",
         "> quit\n",
@@ -418,7 +501,7 @@ def _get_mpv_version(exename):
     re_ver = re.compile(r"mpv (\d+)\.(\d+)\.(\d+)")
 
     for line in o.split("\n"):
-        m = re_ver.match(line)
+        m = re_ver.search(line)
 
         if m:
             v = tuple(map(int, m.groups()))

@@ -16,12 +16,12 @@ class ListUser(ListViewItem):
 
     def description(self, length=10):
         """Channel description"""
-        return u.uea_pad(
-            length,
-            self.data["descriptionSnippet"][0]["text"]
-            if self.data["descriptionSnippet"] is not None
-            else "No description found",
-        )
+        desc = self.data.get("description")
+        if not desc:
+            snippet = self.data.get("descriptionSnippet")
+            desc = snippet[0]["text"] if snippet else "No description found"
+        
+        return u.uea_pad(length, desc)
 
     def kind(self, length=10):
         """Returns the youtube datatype

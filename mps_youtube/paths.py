@@ -41,7 +41,10 @@ def get_default_ddir():
 def get_config_dir():
     """Get user's configuration directory. Migrate to new mps name if old."""
     if mswin:
-        confdir = os.environ["APPDATA"]
+        confdir = os.environ.get("APPDATA")
+        if not confdir:
+            userprofile = os.environ.get("USERPROFILE", os.path.expanduser("~"))
+            confdir = os.path.join(userprofile, "AppData", "Roaming")
 
     elif "XDG_CONFIG_HOME" in os.environ:
         confdir = os.environ["XDG_CONFIG_HOME"]

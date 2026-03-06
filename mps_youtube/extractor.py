@@ -1,3 +1,4 @@
+import concurrent.futures
 import json
 import os
 import glob
@@ -11,18 +12,21 @@ import urllib.error
 import typing as T
 from datetime import datetime, timezone
 
-from . import util
+from . import g, paths, util
 import yt_dlp
+from .innertube import Innertube
+from .streamurlfetcher import StreamURLFetcher
+
+_innertube = Innertube()
+_stream_fetcher = StreamURLFetcher(_innertube)
 
 
 def _format_published_time(entry):
-    """Helper to get a standard ISO8601 string from yt-dlp entry."""
-    # Try timestamp first (unix epoch)
+    """Helper to get a standard ISO8601 string from data (yt-dlp format)."""
     ts = entry.get("timestamp")
     if ts:
         return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # Try upload_date (YYYYMMDD)
     ud = entry.get("upload_date")
     if ud and len(ud) == 8:
         try:
@@ -39,13 +43,19 @@ class VideoInfo:
     def __init__(self, data: T.Dict[str, T.Any]):
         self._data = data
         self._ytid = data.get("id") or data.get("videoId")
-        self.title = data.get("title", "Unknown Title")
-        self.author = data.get("uploader") or data.get("channel", {}).get("name")
-        self.length = data.get("duration") or 0
-        self.view_count = data.get("view_count") or 0
+        self.title = data.get("title") or "Unknown Title"
+        self.author = data.get("uploader") or data.get("channel", {}).get("name") or "Unknown Author"
+        
+        duration = data.get("duration") or data.get("lengthSeconds")
+        self.length = int(duration) if duration else 0
+        
+        views = data.get("view_count") or data.get("viewCount")
+        self.view_count = int(views) if views else 0
+        
         self.likes = data.get("likes") or 0
         self.dislikes = data.get("dislikes") or 0
         self.rating = data.get("averageRating") or 0
+        
         expires = data.get("expires")
         self.expiry = time.time() + (expires if expires is not None else 3600)
         self.fresh = True
@@ -92,33 +102,158 @@ class MyLogger:
 
 def get_ydl_opts(extra_opts: T.Optional[T.Dict[str, T.Any]] = None) -> T.Dict[str, T.Any]:
     """Factory for standard yt-dlp options."""
+    cookiefile = _resolve_cookiefile()
+    cookies_from_browser = _resolve_cookies_from_browser()
+    visitor_data = _resolve_visitor_data()
     opts = {
         "logger": MyLogger(),
         "quiet": True,
         "no_warnings": True,
         "nocheckcertificate": True,
+        # Required for newer YouTube JS challenge/signature flows.
+        "remote_components": "ejs:github",
+        "user_agent": util.BROWSER_USER_AGENT,
+        "http_headers": util.web_headers(),
+        "format": "best/bestvideo+bestaudio",
+        "ignore_no_formats_error": True,
     }
+    if visitor_data:
+        opts["extractor_args"] = {
+            "youtube": {
+                "visitor_data": [visitor_data],
+                # Recommended by yt-dlp for visitor-data flow.
+                "player_skip": ["webpage", "configs"],
+                "player_client": ["default", "web"],
+            },
+            "youtubetab": {"skip": ["webpage"]},
+        }
+    elif cookiefile:
+        opts["cookiefile"] = cookiefile
+    elif cookies_from_browser:
+        opts["cookiesfrombrowser"] = cookies_from_browser
     if extra_opts:
         opts.update(extra_opts)
     return opts
 
 
+def _resolve_cookiefile() -> T.Optional[str]:
+    """Find a usable cookie file for authenticated yt-dlp requests."""
+    try:
+        candidates = [
+            g.cookies_file,
+            os.path.join(paths.get_config_dir(), "cookies.txt"),
+        ]
+        for path in candidates:
+            if not path:
+                continue
+            expanded = os.path.expanduser(path)
+            if os.path.isfile(expanded):
+                return expanded
+    except AttributeError:
+        pass
+    return None
+
+
+def _resolve_cookies_from_browser() -> T.Optional[T.Tuple[str, ...]]:
+    """Parse --cookies-from-browser into yt-dlp's expected tuple form."""
+    try:
+        value = g.cookies_from_browser
+        if not value:
+            return None
+
+        parts = value.split(":", 1)
+        browser = parts[0].strip()
+        if not browser:
+            return None
+
+        if len(parts) == 1:
+            return (browser,)
+
+        profile = parts[1].strip()
+        return (browser, profile) if profile else (browser,)
+    except AttributeError:
+        return None
+
+
+def _resolve_visitor_data() -> T.Optional[str]:
+    """Return CLI-provided YouTube visitor data token, if any."""
+    try:
+        value = g.visitor_data
+        if not value:
+            return None
+        value = value.strip()
+        return value or None
+    except AttributeError:
+        return None
+
+
 def get_video_streams(ytid):
-    """Get different video / audio stream formats for a video id."""
+    """Get video / audio stream formats for a video id using Innertube with yt-dlp fallback."""
+    cookiefile = _resolve_cookiefile()
+    cookies_from_browser = _resolve_cookies_from_browser()
+    visitor_data = _resolve_visitor_data()
+
+    try:
+        streams = _innertube.get_video_streams(ytid)
+        if streams:
+            return streams
+        util.dbg("Innertube returned no streams for %s", ytid)
+    except Exception as e:
+        util.dbg("Innertube get_video_streams failed: %s", str(e))
+
+    # No-cookie path: try StreamURLFetcher before full yt-dlp extraction.
+    if not (cookiefile or cookies_from_browser or visitor_data):
+        try:
+            player_response = _innertube.get_video_info(ytid)
+            streams = _stream_fetcher.get_all(ytid, player_response=player_response)
+            if streams:
+                util.dbg("StreamURLFetcher resolved streams for %s", ytid)
+                return streams
+            util.dbg("StreamURLFetcher returned no streams for %s", ytid)
+        except Exception as e:
+            util.dbg("StreamURLFetcher failed for %s: %s", ytid, str(e))
+
+    # Fallback to yt-dlp
+    url = f"https://www.youtube.com/watch?v={ytid}"
     try:
         with yt_dlp.YoutubeDL(get_ydl_opts()) as ydl:
-            info_dict = ydl.extract_info(ytid, download=False)
-            return [
-                i
-                for i in info_dict["formats"]
-                if i.get("format_note") != "storyboard"
-            ]
+            info_dict = ydl.extract_info(url, download=False)
+            return _extract_streams_from_info(info_dict)
     except Exception as e:
         raise ExtractionError(f"Failed to extract streams for {ytid}: {str(e)}")
 
 
+def _extract_streams_from_info(info_dict):
+    """Normalize yt-dlp extraction output into a list of format dictionaries."""
+    formats = info_dict.get("formats") or []
+    formats = [i for i in formats if i.get("format_note") != "storyboard"]
+
+    if not formats:
+        requested_formats = info_dict.get("requested_formats") or []
+        formats = [i for i in requested_formats if i.get("url")]
+
+    if not formats and info_dict.get("url"):
+        formats = [
+            {
+                "url": info_dict.get("url"),
+                "ext": info_dict.get("ext"),
+                "resolution": info_dict.get("resolution"),
+                "width": info_dict.get("width"),
+                "height": info_dict.get("height"),
+                "vcodec": info_dict.get("vcodec", "none"),
+                "acodec": info_dict.get("acodec", "none"),
+                "tbr": info_dict.get("tbr"),
+                "abr": info_dict.get("abr"),
+                "filesize": info_dict.get("filesize"),
+                "filesize_approx": info_dict.get("filesize_approx"),
+            }
+        ]
+
+    return formats
+
+
 def download_video(ytid, folder, audio_only=False):
-    """Download video or audio to the specified folder."""
+    """Download video or audio using yt-dlp."""
     ytdl_format_options = {
         "outtmpl": os.path.join(folder, "%(title)s-%(id)s.%(ext)s")
     }
@@ -141,221 +276,53 @@ def download_video(ytid, folder, audio_only=False):
 
 
 def search_videos(query, pages):
-    """Search for videos and return standard results using yt-dlp."""
-    return _search_videos_ytdl(query, pages)
-
-
-def _enrich_results_with_dates(url, results):
-    """Scrape relative published times from a YouTube page and enrich results."""
+    """Search for videos using internal Innertube engine."""
     try:
-        # Force English locale via URL parameter and header
-        if "?" in url:
-            url += "&hl=en"
-        else:
-            url += "?hl=en"
-
-        req = urllib.request.Request(
-            url, headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "en-US,en;q=0.5"}
-        )
-        with urllib.request.urlopen(req, timeout=5) as response:
-            html = response.read().decode(errors="ignore")
-            # Regex to find videoId and publishedTimeText
-            # Note: "videoId":"ID" can appear before or after publishedTimeText depending on the renderer
-            # We use a broad search and map by ID.
-            pattern = r'"videoId":"([\w-]{11})".*?"publishedTimeText":\{"simpleText":"([^"]+)"\}'
-            matches = re.findall(pattern, html)
-            dates = {vid: age for vid, age in matches}
-            
-            # Alternative pattern for different renderers
-            alt_pattern = r'"publishedTimeText":\{"simpleText":"([^"]+)"\}.*?"videoId":"([\w-]{11})"'
-            alt_matches = re.findall(alt_pattern, html)
-            for age, vid in alt_matches:
-                if vid not in dates:
-                    dates[vid] = age
-
-            for v in results:
-                if v["id"] in dates:
-                    v["publishedTime"] = dates[v["id"]]
+        results = _innertube.search(query, limit=pages * 20)
+        # Exclude channel results and ensure we only have videos
+        filtered = [
+            r for r in results 
+            if r.get("type") == "video"
+        ]
+        return filtered
     except Exception as e:
-        util.dbg("Enrichment failed for %s: %s", url, e)
-
-
-def _search_videos_ytdl(query, pages):
-    """Search using yt-dlp with optimized flags."""
-    count = pages * 50
-    ydl_opts = get_ydl_opts({
-        "extract_flat": True,
-        "allowed_extractors": ["youtube:search", "youtube", "youtube:search_url", "youtube:playlist", "youtube:tab"],
-        "lazy_extract": True,
-        "cachedir": False,
-    })
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(f"ytsearch{count}:{query}", download=False)
-            results = []
-            for entry in info.get("entries", []):
-                # Map yt-dlp entry to youtubesearchpython format
-                duration = entry.get("duration")
-                if duration:
-                    h = int(duration // 3600)
-                    m = int((duration % 3600) // 60)
-                    s = int(duration % 60)
-                    if h > 0:
-                        duration_str = f"{h}:{m:02d}:{s:02d}"
-                    else:
-                        duration_str = f"{m}:{s:02d}"
-                else:
-                    duration_str = "0:00"
-
-                view_count = entry.get("view_count")
-                view_count_str = f"{view_count:,} views" if view_count is not None else "?"
-
-                results.append({
-                    "type": "video",
-                    "id": entry.get("id"),
-                    "title": entry.get("title"),
-                    "publishedTime": _format_published_time(entry) or "Unknown",
-                    "duration": duration_str,
-                    "viewCount": {
-                        "text": view_count_str,
-                        "short": view_count_str
-                    },
-                    "channel": {
-                        "name": entry.get("uploader") or entry.get("channel"),
-                        "id": entry.get("uploader_id") or entry.get("channel_id"),
-                    },
-                    "link": entry.get("url") or f"https://www.youtube.com/watch?v={entry.get('id')}",
-                })
-            
-            # Enrich with relative dates from the search page
-            search_url = f"https://www.youtube.com/results?search_query={urllib.parse.quote(query)}"
-            _enrich_results_with_dates(search_url, results)
-            
-            return results
-    except Exception as e:
-        util.dbg("yt-dlp search fallback failed: %s", str(e))
+        util.dbg("Innertube search failed: %s", str(e))
         return []
 
 
 def channel_search(query):
-    """Search for channels using yt-dlp."""
-    encoded_query = urllib.parse.quote(query)
-    # sp=EgIQAg%3D%3D is the filter for channels
-    url = f"https://www.youtube.com/results?search_query={encoded_query}&sp=EgIQAg%3D%3D"
-    
-    ydl_opts = get_ydl_opts({
-        "extract_flat": True,
-        "allowed_extractors": ["youtube:search", "youtube", "youtube:search_url", "youtube:playlist", "youtube:tab"],
-        "lazy_extract": True,
-        "cachedir": False,
-    })
+    """Search for channels using internal Innertube engine."""
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            results = []
-            for entry in info.get("entries", []):
-                description = entry.get("description", "")
-                results.append({
-                    "type": "channel",
-                    "id": entry.get("id"),
-                    "title": entry.get("title") or entry.get("channel"),
-                    "thumbnails": entry.get("thumbnails"),
-                    "videoCount": entry.get("video_count"),
-                    "description": description,
-                    "descriptionSnippet": [{"text": description}] if description else None,
-                    "link": entry.get("url") or f"https://www.youtube.com/channel/{entry.get('id')}",
-                })
-            return results
+        return _innertube.channel_search(query)
     except Exception as e:
-        util.dbg("Channel search failed: %s", str(e))
+        util.dbg("Innertube channel search failed: %s", str(e))
         return []
 
 
 def playlist_search(query):
-    """Search for playlists using yt-dlp for better reliability."""
-    encoded_query = urllib.parse.quote(query)
-    url = f"https://www.youtube.com/results?search_query={encoded_query}&sp=EgIQAw%3D%3D"
-    
-    ydl_opts = get_ydl_opts({
-        "extract_flat": True,
-        "allowed_extractors": ["youtube:search", "youtube", "youtube:search_url", "youtube:playlist", "youtube:tab"],
-        "lazy_extract": True,
-        "cachedir": False,
-    })
+    """Search for playlists using internal Innertube engine."""
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            results = []
-            for entry in info.get("entries", []):
-                # Map yt-dlp entry to expected format for get_pl_from_json
-                results.append({
-                    "type": "playlist",
-                    "id": entry.get("id"),
-                    "title": entry.get("title"),
-                    "videoCount": entry.get("playlist_count") or "?",
-                    "channel": {
-                        "name": entry.get("uploader"),
-                        "id": entry.get("uploader_id"),
-                    },
-                    "publishedAt": None, # Not usually available in flat extract
-                    "description": entry.get("description", ""),
-                })
-            return results
+        return _innertube.search(query, limit=20, params='EgIQAw%3D%3D')
     except Exception as e:
-        raise ExtractionError(f"Playlist search failed: {str(e)}")
-
+        util.dbg("Innertube playlist search failed: %s", str(e))
+        return []
 
 
 def get_playlist(playlist_id):
-    """Get all videos of a playlist using yt-dlp."""
-    url = f"https://www.youtube.com/playlist?list={playlist_id}"
-    ydl_opts = get_ydl_opts({
-        "extract_flat": True,
-        "allowed_extractors": ["youtube:search", "youtube", "youtube:search_url", "youtube:playlist", "youtube:tab"],
-        "lazy_extract": True,
-        "cachedir": False,
-    })
+    """Get all videos of a playlist using internal Innertube engine."""
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            
-            # Create a mock object that looks like youtubesearchpython.Playlist
-            class MockPlaylist:
-                def __init__(self, info):
-                    self.videos = []
-                    self.info = {"info": {"title": info.get("title", "Unknown Playlist")}}
-                    for entry in info.get("entries", []):
-                        duration = entry.get("duration")
-                        if duration:
-                            m, s = divmod(int(duration), 60)
-                            h, m = divmod(m, 60)
-                            duration_str = f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
-                        else:
-                            duration_str = "0:00"
-
-                        self.videos.append({
-                            "id": entry.get("id"),
-                            "title": entry.get("title"),
-                            "duration": duration_str,
-                            "channel": {
-                                "name": entry.get("uploader") or entry.get("channel"),
-                                "id": entry.get("uploader_id") or entry.get("channel_id"),
-                            },
-                            "link": f"https://www.youtube.com/watch?v={entry.get('id')}",
-                        })
-            
-            return MockPlaylist(info)
+        return _innertube.get_playlist(playlist_id)
     except Exception as e:
-        util.dbg("Failed to get playlist %s: %s", playlist_id, str(e))
+        util.dbg("Innertube get_playlist failed: %s", str(e))
         raise ExtractionError(f"Playlist extraction failed: {str(e)}")
 
 
 def get_video_title_suggestions(query):
-    """Get search suggestions using direct Google API call in English."""
+    """Get search suggestions using direct Google API call."""
     encoded_query = urllib.parse.quote(query)
     url = f"https://suggestqueries.google.com/complete/search?client=youtube&ds=yt&hl=en&q={encoded_query}"
     req = urllib.request.Request(
-        url, headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "en-US,en;q=0.5"}
+        url, headers=util.web_headers({"Accept-Language": "en-US,en;q=0.9"})
     )
     try:
         with urllib.request.urlopen(req, timeout=5) as response:
@@ -377,57 +344,17 @@ def channel_id_from_name(query):
 
 
 def all_videos_from_channel(channel_id):
-    """Get all videos from a channel using yt-dlp."""
-    url = f"https://www.youtube.com/channel/{channel_id}/videos"
-    ydl_opts = get_ydl_opts({
-        "extract_flat": True,
-        "allowed_extractors": ["youtube:search", "youtube", "youtube:search_url", "youtube:playlist", "youtube:tab"],
-        "lazy_extract": True,
-        "cachedir": False,
-    })
+    """Get all videos from a channel using internal Innertube engine."""
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            videos = []
-            channel_name = info.get("title") or info.get("uploader")
-            for entry in info.get("entries", []):
-                duration = entry.get("duration")
-                if duration:
-                    m, s = divmod(int(duration), 60)
-                    h, m = divmod(m, 60)
-                    duration_str = f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
-                else:
-                    duration_str = "0:00"
-
-                videos.append({
-                    "id": entry.get("id"),
-                    "title": entry.get("title"),
-                    "description": entry.get("description", ""),
-                    "publishedTime": _format_published_time(entry) or "Unknown",
-                    "duration": duration_str,
-                    "channel": {
-                        "name": entry.get("uploader") or entry.get("channel") or channel_name,
-                        "id": entry.get("uploader_id") or entry.get("channel_id") or channel_id,
-                    },
-                    "link": f"https://www.youtube.com/watch?v={entry.get('id')}",
-                })
-            
-            # Enrich with relative dates from the videos tab
-            _enrich_results_with_dates(url, videos)
-            
-            return videos
+        return _innertube.get_channel_videos(channel_id)
     except Exception as e:
-        util.dbg("Failed to get channel videos for %s: %s", channel_id, str(e))
+        util.dbg("Innertube get_channel_videos failed: %s", str(e))
         return []
 
 
 def search_videos_from_channel(channel_id, query):
     """Search videos within a specific channel."""
-    # This can be done by adding a query string to the channel URL or via search filters
-    encoded_query = urllib.parse.quote(query)
-    url = f"https://www.youtube.com/channel/{channel_id}/search?query={encoded_query}"
-    # Fallback to search if specific channel search fails in flat extract
-    return _search_videos_ytdl(f"{query} channel:{channel_id}", 1)
+    return search_videos(f"{query} channel:{channel_id}", 1)
 
 
 def get_comments(video_id):
@@ -453,22 +380,13 @@ def get_comments(video_id):
         return []
 
 
-import concurrent.futures
-
 def get_video_info(video_id):
-    """Get detailed video info including likes/dislikes in parallel."""
+    """Get detailed video info using yt-dlp."""
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            # Start dislike fetch in background
-            dislike_future = executor.submit(return_dislikes, video_id)
-
-            # Extract info via yt-dlp (main task)
-            ydl_opts = get_ydl_opts()
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(video_id, download=False)
-
-            # Wait for dislikes and merge
-            dislikes = dislike_future.result()
+        ydl_opts = get_ydl_opts()
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(video_id, download=False)
+            dislikes = return_dislikes(video_id)
             info["likes"] = dislikes["likes"]
             info["dislikes"] = dislikes["dislikes"]
             info["averageRating"] = dislikes["rating"]
@@ -480,7 +398,9 @@ def get_video_info(video_id):
 def return_dislikes(video_id):
     """Fetch dislike counts from Return YouTube Dislike API."""
     url = f"https://returnyoutubedislikeapi.com/votes?videoId={video_id}"
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    req = urllib.request.Request(
+        url, headers=util.web_headers({"Accept-Language": "en-US,en;q=0.9"})
+    )
     try:
         with urllib.request.urlopen(req, timeout=5) as response:
             data = json.loads(response.read().decode())
@@ -522,37 +442,16 @@ def extract_video_id(url: str) -> str:
 
 
 def all_playlists_from_channel(channel_id):
-    """Get all playlists belonging to a channel using yt-dlp."""
-    url = f"https://www.youtube.com/channel/{channel_id}/playlists"
-    ydl_opts = get_ydl_opts({
-        "extract_flat": True,
-        "allowed_extractors": ["youtube:search", "youtube", "youtube:search_url", "youtube:playlist", "youtube:tab"],
-        "lazy_extract": True,
-        "cachedir": False,
-    })
+    """Get all playlists belonging to a channel using internal Innertube engine."""
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            playlists = []
-            for entry in info.get("entries", []):
-                playlists.append({
-                    "id": entry.get("id"),
-                    "title": entry.get("title"),
-                    "videoCount": entry.get("playlist_count") or "?",
-                    "channel": {
-                        "name": entry.get("uploader") or entry.get("channel"),
-                        "id": entry.get("uploader_id") or entry.get("channel_id"),
-                    },
-                    "description": entry.get("description", ""),
-                })
-            return playlists
+        return _innertube.get_channel_playlists(channel_id)
     except Exception as e:
-        util.dbg("Failed to get channel playlists for %s: %s", channel_id, str(e))
+        util.dbg("Innertube get_channel_playlists failed: %s", str(e))
         return []
 
 
 def get_subtitles(ytid, output_dir):
-    """Download and save subtitles for a video."""
+    """Download and save subtitles for a video using yt-dlp."""
     if output_dir.endswith("/"):
         output_dir = output_dir[:-1]
     outtmpl = f"{output_dir}/subtitles/{ytid}"

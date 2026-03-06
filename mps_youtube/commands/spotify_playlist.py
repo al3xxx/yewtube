@@ -141,7 +141,7 @@ def _match_tracks(tracks):
             % (c.y, artist, ttitle, c.w, dtime(length))
         )
         q = "%s %s" % (artist, ttitle)
-        w = q = ttitle if artist == "Various Artists" else q
+        q = ttitle if artist == "Various Artists" else q
         util.dbg(q)
 
         # perform fetch
