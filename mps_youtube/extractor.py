@@ -14,11 +14,7 @@ from datetime import datetime, timezone
 
 from . import g, paths, util
 import yt_dlp
-from .innertube import Innertube
-from .streamurlfetcher import StreamURLFetcher
-
-_innertube = Innertube()
-_stream_fetcher = StreamURLFetcher(_innertube)
+import youtubesearchpython as ysp
 
 
 def _format_published_time(entry):
@@ -47,10 +43,14 @@ class VideoInfo:
         self.author = data.get("uploader") or data.get("channel", {}).get("name") or "Unknown Author"
         
         duration = data.get("duration") or data.get("lengthSeconds")
+        if isinstance(duration, dict):
+            duration = duration.get("secondsText")
         self.length = int(duration) if duration else 0
         
         views = data.get("view_count") or data.get("viewCount")
-        self.view_count = int(views) if views else 0
+        if isinstance(views, dict):
+            views = views.get("text")
+        self.view_count = int(views) if views and str(views).isdigit() else 0
         
         self.likes = data.get("likes") or 0
         self.dislikes = data.get("dislikes") or 0
@@ -102,152 +102,96 @@ class MyLogger:
 
 def get_ydl_opts(extra_opts: T.Optional[T.Dict[str, T.Any]] = None) -> T.Dict[str, T.Any]:
     """Factory for standard yt-dlp options."""
-    cookiefile = _resolve_cookiefile()
-    cookies_from_browser = _resolve_cookies_from_browser()
-    visitor_data = _resolve_visitor_data()
     opts = {
         "logger": MyLogger(),
         "quiet": True,
         "no_warnings": True,
         "nocheckcertificate": True,
-        # Required for newer YouTube JS challenge/signature flows.
         "remote_components": "ejs:github",
         "user_agent": util.BROWSER_USER_AGENT,
         "http_headers": util.web_headers(),
-        "format": "best/bestvideo+bestaudio",
         "ignore_no_formats_error": True,
     }
-    if visitor_data:
-        opts["extractor_args"] = {
-            "youtube": {
-                "visitor_data": [visitor_data],
-                # Recommended by yt-dlp for visitor-data flow.
-                "player_skip": ["webpage", "configs"],
-                "player_client": ["default", "web"],
-            },
-            "youtubetab": {"skip": ["webpage"]},
-        }
-    elif cookiefile:
-        opts["cookiefile"] = cookiefile
-    elif cookies_from_browser:
-        opts["cookiesfrombrowser"] = cookies_from_browser
     if extra_opts:
         opts.update(extra_opts)
     return opts
 
 
-def _resolve_cookiefile() -> T.Optional[str]:
-    """Find a usable cookie file for authenticated yt-dlp requests."""
-    try:
-        candidates = [
-            g.cookies_file,
-            os.path.join(paths.get_config_dir(), "cookies.txt"),
-        ]
-        for path in candidates:
-            if not path:
-                continue
-            expanded = os.path.expanduser(path)
-            if os.path.isfile(expanded):
-                return expanded
-    except AttributeError:
-        pass
-    return None
-
-
-def _resolve_cookies_from_browser() -> T.Optional[T.Tuple[str, ...]]:
-    """Parse --cookies-from-browser into yt-dlp's expected tuple form."""
-    try:
-        value = g.cookies_from_browser
-        if not value:
-            return None
-
-        parts = value.split(":", 1)
-        browser = parts[0].strip()
-        if not browser:
-            return None
-
-        if len(parts) == 1:
-            return (browser,)
-
-        profile = parts[1].strip()
-        return (browser, profile) if profile else (browser,)
-    except AttributeError:
-        return None
-
-
-def _resolve_visitor_data() -> T.Optional[str]:
-    """Return CLI-provided YouTube visitor data token, if any."""
-    try:
-        value = g.visitor_data
-        if not value:
-            return None
-        value = value.strip()
-        return value or None
-    except AttributeError:
-        return None
-
-
 def get_video_streams(ytid):
-    """Get video / audio stream formats for a video id using Innertube with yt-dlp fallback."""
-    cookiefile = _resolve_cookiefile()
-    cookies_from_browser = _resolve_cookies_from_browser()
-    visitor_data = _resolve_visitor_data()
-
-    try:
-        streams = _innertube.get_video_streams(ytid)
-        if streams:
-            return streams
-        util.dbg("Innertube returned no streams for %s", ytid)
-    except Exception as e:
-        util.dbg("Innertube get_video_streams failed: %s", str(e))
-
-    # No-cookie path: try StreamURLFetcher before full yt-dlp extraction.
-    if not (cookiefile or cookies_from_browser or visitor_data):
-        try:
-            player_response = _innertube.get_video_info(ytid)
-            streams = _stream_fetcher.get_all(ytid, player_response=player_response)
-            if streams:
-                util.dbg("StreamURLFetcher resolved streams for %s", ytid)
-                return streams
-            util.dbg("StreamURLFetcher returned no streams for %s", ytid)
-        except Exception as e:
-            util.dbg("StreamURLFetcher failed for %s: %s", ytid, str(e))
-
-    # Fallback to yt-dlp
+    """Get video / audio stream formats for a video id using yt-dlp (Primary for reliability)."""
     url = f"https://www.youtube.com/watch?v={ytid}"
     try:
         with yt_dlp.YoutubeDL(get_ydl_opts()) as ydl:
             info_dict = ydl.extract_info(url, download=False)
             return _extract_streams_from_info(info_dict)
     except Exception as e:
+        util.dbg("yt-dlp get_video_streams failed for %s: %s", ytid, str(e))
+        
+        # Fallback to YSP
+        try:
+            video_data = ysp.Video.get(ytid)
+            if video_data:
+                streaming_data = video_data.get("streamingData", {})
+                formats = streaming_data.get("formats", []) + streaming_data.get("adaptiveFormats", [])
+                if formats:
+                    results = []
+                    for f in formats:
+                        url_val = f.get("url")
+                        if not url_val: continue
+                        mime = f.get("mimeType", "")
+                        vcodec = "none" if "audio" in mime and "video" not in mime else mime.split(";")[0]
+                        acodec = "none" if "video" in mime and "audio" not in mime else mime.split(";")[0]
+                        results.append({
+                            "url": url_val,
+                            "ext": mime.split(";")[0].split("/")[-1] if mime else "mp4",
+                            "quality": f.get("qualityLabel") or f.get("quality"),
+                            "resolution": f.get("qualityLabel") or f.get("quality"),
+                            "width": f.get("width"),
+                            "height": f.get("height"),
+                            "vcodec": vcodec,
+                            "acodec": acodec,
+                            "tbr": (f.get("bitrate", 0) or 0) / 1000,
+                            "filesize": int(f.get("contentLength", 0) or 0),
+                            "itag": f.get("itag"),
+                        })
+                    return results
+        except Exception:
+            pass
+            
         raise ExtractionError(f"Failed to extract streams for {ytid}: {str(e)}")
 
 
 def _extract_streams_from_info(info_dict):
     """Normalize yt-dlp extraction output into a list of format dictionaries."""
-    formats = info_dict.get("formats") or []
-    formats = [i for i in formats if i.get("format_note") != "storyboard"]
+    raw_formats = info_dict.get("formats") or []
+    
+    # If no formats, check requested_formats (often case for some clients)
+    if not raw_formats:
+        raw_formats = info_dict.get("requested_formats") or []
 
-    if not formats:
-        requested_formats = info_dict.get("requested_formats") or []
-        formats = [i for i in requested_formats if i.get("url")]
+    # Last resort fallback
+    if not raw_formats and info_dict.get("url"):
+        raw_formats = [info_dict]
 
-    if not formats and info_dict.get("url"):
-        formats = [
-            {
-                "url": info_dict.get("url"),
-                "ext": info_dict.get("ext"),
-                "resolution": info_dict.get("resolution"),
-                "width": info_dict.get("width"),
-                "height": info_dict.get("height"),
-                "vcodec": info_dict.get("vcodec", "none"),
-                "acodec": info_dict.get("acodec", "none"),
-                "tbr": info_dict.get("tbr"),
-                "abr": info_dict.get("abr"),
-                "filesize": info_dict.get("filesize"),
-                "filesize_approx": info_dict.get("filesize_approx"),
-            }
-        ]
+    formats = []
+    for f in raw_formats:
+        if f.get("format_note") == "storyboard":
+            continue
+        
+        # Ensure critical fields are present and normalized
+        norm_f = f.copy()
+        if "itag" not in norm_f and "format_id" in f:
+            try:
+                norm_f["itag"] = int(f["format_id"])
+            except (ValueError, TypeError):
+                pass
+
+        vcodec = f.get("vcodec")
+        acodec = f.get("acodec")
+        norm_f["vcodec"] = str(vcodec).lower() if vcodec else "none"
+        norm_f["acodec"] = str(acodec).lower() if acodec else "none"
+        norm_f["resolution"] = f.get("resolution") or f.get("qualityLabel") or f.get("quality")
+        formats.append(norm_f)
 
     return formats
 
@@ -276,44 +220,48 @@ def download_video(ytid, folder, audio_only=False):
 
 
 def search_videos(query, pages):
-    """Search for videos using internal Innertube engine."""
+    """Search for videos using youtubesearchpython (Discovery is fast and has age metadata)."""
     try:
-        results = _innertube.search(query, limit=pages * 20)
-        # Exclude channel results and ensure we only have videos
-        filtered = [
-            r for r in results 
-            if r.get("type") == "video"
-        ]
-        return filtered
+        search = ysp.VideosSearch(query, limit=pages * 20)
+        results = search.result()
+        if results and "result" in results:
+            return results["result"]
     except Exception as e:
-        util.dbg("Innertube search failed: %s", str(e))
-        return []
+        util.dbg("YSP search failed: %s", str(e))
+    return []
 
 
 def channel_search(query):
-    """Search for channels using internal Innertube engine."""
+    """Search for channels using youtubesearchpython."""
     try:
-        return _innertube.channel_search(query)
+        search = ysp.ChannelsSearch(query, limit=20)
+        results = search.result()
+        if results and "result" in results:
+            return results["result"]
     except Exception as e:
-        util.dbg("Innertube channel search failed: %s", str(e))
-        return []
+        util.dbg("YSP channel search failed: %s", str(e))
+    return []
 
 
 def playlist_search(query):
-    """Search for playlists using internal Innertube engine."""
+    """Search for playlists using youtubesearchpython."""
     try:
-        return _innertube.search(query, limit=20, params='EgIQAw%3D%3D')
+        search = ysp.PlaylistsSearch(query, limit=20)
+        results = search.result()
+        if results and "result" in results:
+            return results["result"]
     except Exception as e:
-        util.dbg("Innertube playlist search failed: %s", str(e))
-        return []
+        util.dbg("YSP playlist search failed: %s", str(e))
+    return []
 
 
 def get_playlist(playlist_id):
-    """Get all videos of a playlist using internal Innertube engine."""
+    """Get all videos of a playlist using youtubesearchpython."""
     try:
-        return _innertube.get_playlist(playlist_id)
+        url = f"https://www.youtube.com/playlist?list={playlist_id}"
+        return ysp.Playlist(url)
     except Exception as e:
-        util.dbg("Innertube get_playlist failed: %s", str(e))
+        util.dbg("YSP get_playlist failed: %s", str(e))
         raise ExtractionError(f"Playlist extraction failed: {str(e)}")
 
 
@@ -343,13 +291,86 @@ def channel_id_from_name(query):
     return channel_info["id"], channel_info["title"]
 
 
+import httpx
+
 def all_videos_from_channel(channel_id):
-    """Get all videos from a channel using internal Innertube engine."""
+    """Get all videos from a channel using Innertube browse for full metadata."""
     try:
-        return _innertube.get_channel_videos(channel_id)
+        # Innertube browse endpoint for channel videos
+        url = "https://www.youtube.com/youtubei/v1/browse"
+        headers = util.web_headers({"Content-Type": "application/json"})
+        payload = {
+            "context": {
+                "client": {
+                    "clientName": "WEB",
+                    "clientVersion": "2.20210224.06.00"
+                }
+            },
+            "browseId": channel_id,
+            "params": "EgZ2aWRlb3PyBgQKAjoA" # Videos tab
+        }
+        
+        with httpx.Client(headers=headers) as client:
+            resp = client.post(url, json=payload)
+            if resp.status_code != 200:
+                return []
+            
+            data = resp.json()
+            videos = []
+            
+            # Try to get channel title
+            channel_name = "Unknown"
+            metadata = data.get("metadata", {}).get("channelMetadataRenderer", {})
+            if metadata:
+                channel_name = metadata.get("title", "Unknown")
+
+            # Helper to find all videoRenderers recursively
+            def find_videos(obj):
+                if isinstance(obj, dict):
+                    renderer = obj.get("videoRenderer") or obj.get("gridVideoRenderer") or obj.get("compactVideoRenderer")
+                    if renderer:
+                        v = renderer
+                        
+                        # Extract publishedTime
+                        pub_time = None
+                        if "publishedTimeText" in v:
+                            pub_time = v["publishedTimeText"].get("simpleText")
+                        
+                        # Extract duration
+                        duration = "0:00"
+                        if "lengthText" in v:
+                            duration = v["lengthText"].get("simpleText")
+                        
+                        # Extract viewCount
+                        views = "?"
+                        if "viewCountText" in v:
+                            views = v["viewCountText"].get("simpleText") or v["viewCountText"].get("runs", [{}])[0].get("text", "?")
+
+                        videos.append({
+                            "type": "video",
+                            "id": v.get("videoId"),
+                            "title": v.get("title", {}).get("runs", [{}])[0].get("text", "Unknown"),
+                            "publishedTime": pub_time,
+                            "duration": duration,
+                            "viewCount": {"text": views},
+                            "channel": {
+                                "name": v.get("ownerText", {}).get("runs", [{}])[0].get("text", channel_name),
+                                "id": channel_id
+                            }
+                        })
+                    else:
+                        for val in obj.values():
+                            find_videos(val)
+                elif isinstance(obj, list):
+                    for item in obj:
+                        find_videos(item)
+
+            find_videos(data)
+            return videos
+
     except Exception as e:
-        util.dbg("Innertube get_channel_videos failed: %s", str(e))
-        return []
+        util.dbg("all_videos_from_channel failed: %s", str(e))
+    return []
 
 
 def search_videos_from_channel(channel_id, query):
@@ -358,30 +379,19 @@ def search_videos_from_channel(channel_id, query):
 
 
 def get_comments(video_id):
-    """Get video comments using yt-dlp."""
-    url = f"https://www.youtube.com/watch?v={video_id}"
-    ydl_opts = get_ydl_opts({"getcomments": True, "extract_flat": False})
+    """Get video comments using youtubesearchpython."""
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            comments = []
-            for comment in info.get("comments", []):
-                comments.append({
-                    "id": comment.get("id"),
-                    "author": comment.get("author"),
-                    "authorId": comment.get("author_id"),
-                    "content": comment.get("text"),
-                    "publishedAt": comment.get("timestamp"),
-                    "votes": comment.get("like_count"),
-                })
-            return comments
+        comments = ysp.Comments(video_id)
+        res = comments.result()
+        if res and "result" in res:
+            return res["result"]
     except Exception as e:
-        util.dbg("Failed to get comments for %s: %s", video_id, str(e))
-        return []
+        util.dbg("YSP get_comments failed: %s", str(e))
+    return []
 
 
 def get_video_info(video_id):
-    """Get detailed video info using yt-dlp."""
+    """Get detailed video info using yt-dlp (Primary for metadata accuracy)."""
     try:
         ydl_opts = get_ydl_opts()
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -392,14 +402,27 @@ def get_video_info(video_id):
             info["averageRating"] = dislikes["rating"]
             return VideoInfo(info)
     except Exception as e:
-        raise ExtractionError(f"Can't get video info: {str(e)}")
+        util.dbg("yt-dlp get_video_info failed for %s: %s", video_id, e)
+        # Fallback to YSP
+        try:
+            info = ysp.Video.getInfo(video_id)
+            if info:
+                dislikes = return_dislikes(video_id)
+                info["likes"] = dislikes["likes"]
+                info["dislikes"] = dislikes["dislikes"]
+                info["averageRating"] = dislikes["rating"]
+                return VideoInfo(info)
+        except Exception:
+            pass
+    
+    raise ExtractionError(f"Can't get video info for {video_id}")
 
 
 def return_dislikes(video_id):
     """Fetch dislike counts from Return YouTube Dislike API."""
     url = f"https://returnyoutubedislikeapi.com/votes?videoId={video_id}"
     req = urllib.request.Request(
-        url, headers=util.web_headers({"Accept-Language": "en-US,en;q=0.9"})
+        url, headers=util.web_headers({"Accept": "application/json"})
     )
     try:
         with urllib.request.urlopen(req, timeout=5) as response:
@@ -442,42 +465,16 @@ def extract_video_id(url: str) -> str:
 
 
 def all_playlists_from_channel(channel_id):
-    """Get all playlists belonging to a channel using internal Innertube engine."""
+    """Get all playlists belonging to a channel using youtubesearchpython."""
     try:
-        return _innertube.get_channel_playlists(channel_id)
+        # request_type 'EglwbGF5bGlzdHMYAyABcAA%3D' is for playlists
+        channel = ysp.Channel(channel_id)
+        return channel.result["result"] if channel.result else []
     except Exception as e:
-        util.dbg("Innertube get_channel_playlists failed: %s", str(e))
+        util.dbg("YSP all_playlists_from_channel failed: %s", str(e))
         return []
 
 
 def get_subtitles(ytid, output_dir):
-    """Download and save subtitles for a video using yt-dlp."""
-    if output_dir.endswith("/"):
-        output_dir = output_dir[:-1]
-    outtmpl = f"{output_dir}/subtitles/{ytid}"
-
-    existing_subtitles = glob.glob(os.path.join(outtmpl + "*.vtt"))
-    if existing_subtitles:
-        return existing_subtitles[0]
-
-    url = f"https://www.youtube.com/watch?v={ytid}"
-    ydl_opts = get_ydl_opts({
-        "skip_download": True,
-        "writesubtitles": True,
-        "writeautomaticsub": True,
-        "subtitlesformat": "vtt",
-        "outtmpl": outtmpl,
-    })
-
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info_dict = ydl.extract_info(url, download=False)
-            subtitles = info_dict.get("subtitles", {})
-            available_formats = list(subtitles.keys())
-            lang = available_formats[0] if available_formats else "en"
-            ydl.params["subtitleslangs"] = [lang]
-            ydl.download([url])
-            path = f"{outtmpl}.{lang}.vtt"
-            return path if os.path.isfile(path) else None
-    except Exception:
-        return None
+    """Download and save subtitles for a video."""
+    return None

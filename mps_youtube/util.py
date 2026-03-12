@@ -386,6 +386,34 @@ def real_len(u, alt=False):
     return int(round(sum(widths.get(ueaw(char), 1) for char in u)))
 
 
+def format_yt_date(date_str):
+    """Convert ISO8601, YYYYMMDD, or YYYY-MM-DD to a concise display date."""
+    if not date_str or date_str in ("?", "Unknown"):
+        return "?"
+    
+    # Already relative? (e.g. "5 months ago")
+    if " ago" in date_str:
+        return date_str
+
+    try:
+        # Try ISO8601 (e.g. 2024-04-25T00:00:00Z)
+        if "T" in date_str:
+            t = datetime.strptime(date_str.split(".")[0].rstrip("Z"), "%Y-%m-%dT%H:%M:%S")
+        # Try YYYY-MM-DD
+        elif "-" in date_str and len(date_str) == 10:
+            t = datetime.strptime(date_str, "%Y-%m-%d")
+        # Try YYYYMMDD
+        elif len(date_str) == 8 and date_str.isdigit():
+            t = datetime.strptime(date_str, "%Y%m%d")
+        else:
+            return date_str
+            
+        return t.strftime("%d-%m-%y")
+    except Exception as e:
+        logging.debug("Failed to format date '%s': %s", date_str, e)
+        return date_str
+
+
 def yt_datetime(yt_date_time):
     """Return a time object, locale formated date string and locale formatted time string."""
     if yt_date_time is None:

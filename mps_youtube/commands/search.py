@@ -437,8 +437,19 @@ def get_tracks_from_json(jsons):
             published_time = (
                 item.get("publishedTime")
                 or item.get("publishedTimeText")
-                or "?"
             )
+
+            # Fallback for Playlist.get results which have age in accessibility field
+            if not published_time and "accessibility" in item:
+                # accessibility format: 'TITLE by CHANNEL AGE DURATION'
+                # we want to extract 'AGE' which is usually 'X years/months ago'
+                label = item["accessibility"].get("title", "")
+                match = re.search(r"(\d+ \w+ ago)", label)
+                if match:
+                    published_time = match.group(1)
+
+            published_time = published_time or "?"
+            display_date = util.format_yt_date(published_time)
 
             channel_data = item.get("channel", {})
             uploader_id = channel_data.get("id", "?")
@@ -459,8 +470,8 @@ def get_tracks_from_json(jsons):
                 uploaderName=uploader_name,
                 category=category,
                 aspect="custom",
-                uploaded=published_time,
-                uploadedTime="?",
+                uploaded=display_date,
+                uploadedTime=display_date,
                 likes=str(num_repr(likes)),
                 dislikes=str(num_repr(dislikes)),
                 commentCount="?",

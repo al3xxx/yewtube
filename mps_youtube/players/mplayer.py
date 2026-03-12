@@ -126,6 +126,12 @@ class mplayer(CmdPlayer):
         elif returncode == 43:
             self.stop()
 
+        elif returncode == 44:
+            self.mpris_next()
+
+        elif returncode == 45:
+            self.mpris_previous()
+
         else:
             self.next()
 

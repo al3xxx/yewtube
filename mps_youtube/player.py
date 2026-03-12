@@ -328,6 +328,25 @@ class CmdPlayer(BasePlayer):
             if self.song_no < len(self.songlist):
                 self.song_no += 1
 
+    def mpris_next(self):
+        """Skip to next track from an explicit MPRIS command."""
+        self.terminate_process()
+        if self.repeat and self.song_no == len(self.songlist) - 1:
+            self.song_no = 0
+        else:
+            self.song_no += 1
+
+    def mpris_previous(self):
+        """Skip to previous track from an explicit MPRIS command."""
+        self.terminate_process()
+        if self.song_no == 0:
+            if self.repeat:
+                self.song_no = len(self.songlist) - 1
+            else:
+                self.song_no = 0
+        else:
+            self.song_no -= 1
+
     def terminate_process(self):
         self.p.terminate()
         # If using shell=True or the player

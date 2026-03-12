@@ -103,29 +103,17 @@ This document tracks the significant refactoring and modernizations applied to t
     - Replaced stray runtime `print()` calls with debug logging in playback/config paths.
 - **Lint & Consistency Pass**: Ran a project-wide `ruff --fix` cleanup and resolved remaining manual lint issues.
 
-## 13. Internal Innertube Engine (Completed)
-- **Eliminated External Dependency**: Removed `youtube-search-python` from the project to reduce external dependencies and improve stability. 
-- **Lightweight Internal Client**: Implemented a custom `Innertube` client in `mps_youtube/innertube.py` that mimics the behavior of the removed library by directly interfacing with YouTube's internal API.
-- **Handshake & Session Management**: Added an automated handshake mechanism to retrieve `visitorData` and session cookies, helping to maintain a consistent session identity.
-- **Robust Parsing & Fallback**:
-    - Developed custom parsers for `videoRenderer`, `playlistRenderer`, and full `browse` responses.
-    - Seamlessly integrated the internal engine with the existing `yt-dlp` fallback mechanism, ensuring search and retrieval continuity even in restricted environments.
+## 13. Hybrid Discovery Engine (Completed)
+- **Migrated to `youtube-search-next`**: Switched discovery (search, playlists, channels) to the `youtube-search-next` library for high-speed, maintained access to the YouTube internal API.
+- **Unified Extractor**: Updated `extractor.py` to prioritize library-based discovery while retaining `yt-dlp` as a robust fallback for complex metadata and restricted content.
+- **Redundant Code Removal**: Deleted the manual `mps_youtube/innertube.py` implementation as its functionality is now superiorly handled by the external library.
 
-## 14. Playback and extraction reliability updates (Completed)
-- **Queue continuation fix**: Restored playlist resilience so a failed stream
-  no longer aborts the entire queue. Playback now advances to the next track
-  only when `AUTOPLAY` is enabled.
-- **mpv stderr parser fix**: Repaired non-IPC status parsing by restoring
-  per-character buffering and newline-triggered line processing. This fixes
-  runtime progress, volume, and pause-state updates.
-- **StreamURLFetcher integration**:
-    - Added `mps_youtube/streamurlfetcher.py` to resolve stream URLs from
-      Innertube player responses.
-    - Integrated the fetcher into `extractor.get_video_streams` as a no-cookie
-      path before full `yt-dlp` extraction.
-- **Backported cipher helpers**: Added `_decrypt_signature`,
-  `_decrypt_nsig`, and `signatureCipher`/`n` URL reconstruction helpers in
-  `mps_youtube/innertube.py` for compatibility with modern player response
-  formats.
-- **Cleanup**: Removed temporary benchmark scripting artifacts from the
-  repository after integration and regression fixes were completed.
+## 14. Playback & UI Reliability Updates (Completed)
+- **MPRIS Navigation Enhancement**: Added dedicated exit codes (44, 45) for Next and Previous commands. This allows the playback loop to distinguish manual MPRIS skips from natural player exits, ensuring reliable queue progression.
+- **Fixed Track Date Display**: 
+    - Improved metadata parsing to extract upload ages (e.g., "5 months ago") from `accessibility` labels when standard fields are missing.
+    - Increased default column sizes for "Date" and "Time" from 8 to 14 characters to prevent truncation of relative date strings.
+- **Stream Extraction Stability**: 
+    - Refactored `StreamURLFetcher` to use the `yt-dlp` backend for URL resolution, eliminating 403 Forbidden errors encountered with the library-based fetcher.
+    - Fixed a critical playback bug by ensuring `vcodec` and `acodec` are always normalized to lowercase strings (e.g., `'none'`), preventing empty stream lists.
+- **Full Channel Metadata**: Implemented a direct Innertube `browse` call for the `user <name>` command to retrieve complete video metadata (age, view counts) which is often stripped in flat playlist listings.

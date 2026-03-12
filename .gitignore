@@ -20,3 +20,4 @@ env/
 .idea/
 venv/
 test.py
+uv.lock

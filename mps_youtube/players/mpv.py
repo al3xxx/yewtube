@@ -52,6 +52,7 @@ class mpv(CmdPlayer):
                 self.mpv_usesock = "--input-ipc-server"
                 util.dbg(c.g + "mpv supports --input-ipc-server" + c.w)
 
+
     def _generate_real_playerargs(self):
         """Generate args for player command.
 
@@ -160,6 +161,7 @@ class mpv(CmdPlayer):
             self.temp_dir = tempfile.mkdtemp(prefix="mpsyt-mpv-")
             self.sockpath = os.path.join(self.temp_dir, "mpv.sock")
             cmd.append(self.mpv_usesock + "=" + self.sockpath)
+            util.dbg("launching mpv with socket: %s", " ".join(cmd))
             self.p = subprocess.Popen(
                 cmd,
                 shell=False,
@@ -222,6 +224,12 @@ class mpv(CmdPlayer):
 
         elif returncode == 43:
             self.stop()
+
+        elif returncode == 44:
+            self.mpris_next()
+
+        elif returncode == 45:
+            self.mpris_previous()
 
         else:
             self.next()

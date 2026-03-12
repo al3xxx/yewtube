@@ -393,14 +393,18 @@ class Mpris2MediaPlayer(dbus.service.Object):
         """
         Skips to the next track in the tracklist.
         """
-        self._sendcommand(["quit"])
+        # Use dedicated exit code so player can distinguish MPRIS skip
+        # from natural player exit.
+        self._sendcommand(["quit", 44])
 
     @dbus.service.method(PLAYER_INTERFACE)
     def Previous(self):
         """
         Skips to the previous track in the tracklist.
         """
-        self._sendcommand(["quit", 42])
+        # Use dedicated exit code so player can distinguish MPRIS skip
+        # from natural player exit.
+        self._sendcommand(["quit", 45])
 
     @dbus.service.method(PLAYER_INTERFACE)
     def Pause(self):
